@@ -1,0 +1,37 @@
+# ---- Root ----
+.git/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local runtime / cache
+.esdata/
+.m2/
+.opencode/
+.tmp/
+
+# Logs
+*.log
+logs/
+
+# Node
+**/node_modules/
+**/dist/
+**/.eslintcache
+**/coverage/
+**/test-results/
+
+# Java
+**/target/
+**/.mvn/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Misc
+nul

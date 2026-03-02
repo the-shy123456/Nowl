@@ -1,0 +1,291 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --um-primary: #8D6E63;
+  --um-primary-600: #5D4037;
+  --um-primary-100: #EFEBE9;
+  --um-accent: #FF7043;
+  --um-cta: #22c55e;
+  --um-bg: #EFEBE9;
+  --um-bg-soft: #F6F1EE;
+  --um-surface: #ffffff;
+  --um-surface-2: #FAF7F5;
+  --um-border: rgba(141, 110, 99, 0.24);
+  --um-text: #3E2723;
+  --um-muted: #8D7B75;
+  --um-shadow: 0 4px 12px rgba(62, 39, 35, 0.1);
+  --um-shadow-soft: 0 2px 8px rgba(62, 39, 35, 0.08);
+  --um-radius: 16px;
+  --um-radius-md: 14px;
+  --um-radius-sm: 10px;
+  --um-gradient: linear-gradient(to bottom right, #FFFFFF, #EFEBE9);
+  --um-form-padding-y: 0.75rem;
+  --um-form-padding-x: 1rem;
+  --um-form-prefix-padding-left: 2.75rem;
+  --um-form-text-offset-x: 8px;
+  --um-header-bg: rgba(255, 255, 255, 0.94);
+  --um-header-border: rgba(141, 110, 99, 0.18);
+  --um-header-shadow: 0 2px 10px rgba(62, 39, 35, 0.08);
+  --um-hover-surface: #fff8f2;
+  --um-focus-ring: rgba(255, 112, 67, 0.26);
+  --um-duration-fast: 0.2s;
+  --um-ease-standard: ease;
+}
+
+body {
+  font-family: 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  scroll-behavior: smooth;
+  background: var(--um-bg);
+  color: var(--um-text);
+}
+
+html {
+  background: var(--um-bg);
+}
+
+h1, h2, h3, h4, h5 {
+  font-family: 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  font-weight: 700;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.um-theme {
+  min-height: 100vh;
+  background: var(--um-gradient);
+  color: var(--um-text);
+  position: relative;
+  isolation: isolate;
+}
+
+.um-theme::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.4), rgba(239, 235, 233, 0.45));
+  pointer-events: none;
+  z-index: -1;
+}
+
+.um-theme ::selection {
+  background: var(--um-primary-100);
+  color: var(--um-primary-600);
+}
+
+.um-shell {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.um-card {
+  background: var(--um-surface);
+  border: 1px solid var(--um-border);
+  border-radius: var(--um-radius);
+  box-shadow: var(--um-shadow-soft);
+}
+
+.um-card-glass {
+  background: var(--um-surface);
+  border: 1px solid var(--um-border);
+  border-radius: var(--um-radius);
+  box-shadow: var(--um-shadow-soft);
+}
+
+.um-theme div.bg-white,
+.um-theme section.bg-white,
+.um-theme article.bg-white,
+.um-theme main.bg-white {
+  background: var(--um-surface);
+}
+
+.um-chip {
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--um-bg-soft);
+  color: var(--um-primary-600);
+}
+
+.um-badge {
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(141, 110, 99, 0.12);
+  color: var(--um-primary-600);
+}
+
+.um-btn {
+  border-radius: var(--um-radius-md);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+}
+
+.um-btn-primary {
+  background: var(--um-accent);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(255, 112, 67, 0.28);
+}
+
+.um-btn-primary:hover {
+  background: #ff5c2f;
+  box-shadow: 0 6px 14px rgba(255, 112, 67, 0.35);
+}
+
+.um-btn-secondary {
+  background: var(--um-surface);
+  border: 1px solid var(--um-border);
+  color: var(--um-text);
+}
+
+.um-btn-ghost {
+  background: transparent;
+  border: 1px dashed rgba(141, 110, 99, 0.35);
+  color: var(--um-primary-600);
+}
+
+.um-icon-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid var(--um-border);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.um-icon-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--um-shadow-soft);
+}
+
+.um-theme input:not([type]),
+.um-theme input[type='text'],
+.um-theme input[type='password'],
+.um-theme input[type='number'],
+.um-theme input[type='datetime-local'],
+.um-theme input[type='email'],
+.um-theme input[type='tel'],
+.um-theme textarea,
+.um-theme select {
+  background: var(--um-surface-2);
+  border: 1px solid var(--um-border);
+  border-radius: var(--um-radius-md);
+  padding: var(--um-form-padding-y) var(--um-form-padding-x);
+  padding-left: calc(var(--um-form-padding-x) + var(--um-form-text-offset-x));
+  color: var(--um-text);
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+}
+
+.um-theme input.um-input-with-prefix {
+  padding-left: calc(var(--um-form-prefix-padding-left) + var(--um-form-text-offset-x));
+}
+
+.um-theme textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.um-theme input::placeholder,
+.um-theme textarea::placeholder {
+  color: rgba(141, 123, 117, 0.7);
+}
+
+.um-theme input:focus,
+.um-theme textarea:focus,
+.um-theme select:focus {
+  border-color: rgba(255, 112, 67, 0.55);
+  box-shadow: 0 0 0 3px rgba(255, 112, 67, 0.14);
+  background: #fff;
+}
+
+/* Hide scrollbars but keep functionality */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Custom scrollbar for main window */
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #EFEBE9;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #D7CCC8;
+}
+
+#app {
+  min-height: 100vh;
+  font-weight: normal;
+  background: var(--um-bg);
+}
+
+.um-theme .el-pagination {
+  --el-pagination-button-bg-color: white;
+  --el-pagination-hover-color: var(--um-primary);
+}
+
+.um-theme .el-pagination .el-pager li.is-active {
+  background: #FF7043;
+  color: white;
+}
+
+/* Unified form hint offset: avoid left icon overlap */
+.um-theme .el-form-item__error {
+  padding-left: 10px;
+  line-height: 1.4;
+}
+
+.um-theme form p.text-xs.text-red-500,
+.um-theme form p.text-xs.text-red-600,
+.um-theme form span.text-xs.text-red-500,
+.um-theme form span.text-xs.text-red-600,
+.um-theme .form-hint-offset {
+  padding-left: 10px;
+}
+
+.um-theme button:focus-visible,
+.um-theme a:focus-visible,
+.um-theme input:focus-visible,
+.um-theme textarea:focus-visible,
+.um-theme select:focus-visible {
+  outline: 2px solid var(--um-focus-ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

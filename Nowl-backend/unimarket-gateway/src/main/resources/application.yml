@@ -1,0 +1,55 @@
+server:
+  port: 8090
+
+spring:
+  application:
+    name: unimarket-gateway
+  cloud:
+    gateway:
+      httpclient:
+        connect-timeout: 5000
+        response-timeout: 15s
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Origin Access-Control-Allow-Credentials
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOriginPatterns:
+              - ${UM_CORS_ALLOWED_ORIGIN_PATTERN_1:http://localhost:*}
+              - ${UM_CORS_ALLOWED_ORIGIN_PATTERN_2:http://127.0.0.1:*}
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - OPTIONS
+            allowedHeaders:
+              - Content-Type
+              - X-Requested-With
+              - X-CSRF-TOKEN
+              - Authorization
+            allowCredentials: true
+      routes:
+        - id: unimarket-backend-all
+          uri: ${UM_BACKEND_URI:http://127.0.0.1:8080}
+          predicates:
+            - Path=/**
+
+management:
+  server:
+    port: ${UM_MANAGEMENT_PORT:18090}
+    address: ${UM_MANAGEMENT_ADDRESS:127.0.0.1}
+  endpoints:
+    web:
+      exposure:
+        include: ${UM_ACTUATOR_EXPOSURE:health,info}
+  endpoint:
+    health:
+      show-details: when_authorized
+
+security:
+  trusted-proxy-ips: ${TRUSTED_PROXY_IPS:127.0.0.1,localhost,::1,0:0:0:0:0:0:0:1}
+
+logging:
+  level:
+    com.unimarket.gateway: info

@@ -1,0 +1,48 @@
+{
+  "properties": {
+    "taskId": { "type": "long" },
+    "title": {
+      "type": "text",
+      "analyzer": "ik_max_word",
+      "search_analyzer": "ik_smart",
+      "fields": {
+        "pinyin": {
+          "type": "text",
+          "analyzer": "pinyin_analyzer"
+        },
+        "keyword": {
+          "type": "keyword"
+        }
+      }
+    },
+    "description": {
+      "type": "text",
+      "analyzer": "ik_max_word",
+      "search_analyzer": "ik_smart"
+    },
+    "taskContent": {
+      "type": "text",
+      "analyzer": "ik_max_word",
+      "search_analyzer": "ik_smart"
+    },
+    "reward": { "type": "scaled_float", "scaling_factor": 100 },
+    "taskStatus": { "type": "integer" },
+    "publisherId": { "type": "long" },
+    "publisherName": { "type": "keyword" },
+    "publisherAvatar": { "type": "keyword", "index": false },
+    "schoolCode": { "type": "keyword" },
+    "campusCode": { "type": "keyword" },
+    "pickupAddress": {
+      "type": "text",
+      "analyzer": "ik_smart"
+    },
+    "deliveryAddress": {
+      "type": "text",
+      "analyzer": "ik_smart"
+    },
+    "createTime": { "type": "date", "format": "yyyy-MM-dd'T'HH:mm:ss.SSS||yyyy-MM-dd'T'HH:mm:ss||epoch_millis" },
+    "updateTime": { "type": "date", "format": "yyyy-MM-dd'T'HH:mm:ss.SSS||yyyy-MM-dd'T'HH:mm:ss||epoch_millis" },
+    "deadline": { "type": "date", "format": "yyyy-MM-dd'T'HH:mm:ss.SSS||yyyy-MM-dd'T'HH:mm:ss||epoch_millis" },
+    "image": { "type": "keyword", "index": false }
+  }
+}

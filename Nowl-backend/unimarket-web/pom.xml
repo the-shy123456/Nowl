@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <parent>
+        <artifactId>unimarket-backend</artifactId>
+        <groupId>com.unimarket</groupId>
+        <version>1.0.0</version>
+    </parent>
+    <modelVersion>4.0.0</modelVersion>
+
+    <artifactId>unimarket-web</artifactId>
+    <name>UniMarket Web</name>
+    <description>UniMarket Web接口模块</description>
+    <packaging>jar</packaging>
+
+    <dependencies>
+        <!-- Spring Boot Starter Web -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+
+        <!-- Core模块 -->
+        <dependency>
+            <groupId>com.unimarket</groupId>
+            <artifactId>unimarket-core</artifactId>
+        </dependency>
+
+        <!-- Security模块 -->
+        <dependency>
+            <groupId>com.unimarket</groupId>
+            <artifactId>unimarket-security</artifactId>
+        </dependency>
+
+        <!-- Admin模块 -->
+        <dependency>
+            <groupId>com.unimarket</groupId>
+            <artifactId>unimarket-admin</artifactId>
+        </dependency>
+
+        <!-- Search模块 -->
+        <dependency>
+            <groupId>com.unimarket</groupId>
+            <artifactId>unimarket-search</artifactId>
+        </dependency>
+
+        <!-- Recommend模块 -->
+        <dependency>
+            <groupId>com.unimarket</groupId>
+            <artifactId>unimarket-recommend</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+            <version>1.3.0</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Lombok -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

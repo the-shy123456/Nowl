@@ -1,0 +1,47 @@
+{
+  "properties": {
+    "productId": { "type": "long" },
+    "title": {
+      "type": "text",
+      "analyzer": "ik_max_word",
+      "search_analyzer": "ik_smart",
+      "fields": {
+        "pinyin": {
+          "type": "text",
+          "analyzer": "pinyin_analyzer"
+        },
+        "keyword": {
+          "type": "keyword"
+        }
+      }
+    },
+    "description": {
+      "type": "text",
+      "analyzer": "ik_max_word",
+      "search_analyzer": "ik_smart"
+    },
+    "categoryId": { "type": "integer" },
+    "categoryName": {
+      "type": "text",
+      "analyzer": "ik_smart",
+      "fields": {
+        "keyword": { "type": "keyword" }
+      }
+    },
+    "price": { "type": "scaled_float", "scaling_factor": 100 },
+    "sellerId": { "type": "long" },
+    "sellerName": { "type": "keyword" },
+    "sellerAvatar": { "type": "keyword", "index": false },
+    "schoolCode": { "type": "keyword" },
+    "campusCode": { "type": "keyword" },
+    "tradeStatus": { "type": "integer" },
+    "reviewStatus": { "type": "integer" },
+    "itemCondition": { "type": "integer" },
+    "image": { "type": "keyword", "index": false },
+    "collectCount": { "type": "integer" },
+    "viewCount": { "type": "integer" },
+    "hotScore": { "type": "float" },
+    "createTime": { "type": "date", "format": "yyyy-MM-dd'T'HH:mm:ss.SSS||yyyy-MM-dd'T'HH:mm:ss||epoch_millis" },
+    "updateTime": { "type": "date", "format": "yyyy-MM-dd'T'HH:mm:ss.SSS||yyyy-MM-dd'T'HH:mm:ss||epoch_millis" }
+  }
+}
