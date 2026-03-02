@@ -1,12 +1,11 @@
 # Nowl
 
-Nowl 是一个校园二手交易与跑腿平台（前后端分离）。项目目标是把“交易 + 跑腿 + 治理能力”做成可演示、可扩展、可答辩的完整系统：
+Nowl 是一个校园二手交易与跑腿平台，基于vue+spring boot设计，有完善的功能，包括风控与搜推以及后台管理（IAM），引入Spring AI提供AI功能，有AI审核、AI估价及对话。项目是为毕业设计提供的，突出一个“校园安全”“校园隔离”，因此多租户隔离以校园、校区为单位。
 
 - 前端：Vue 3 + TypeScript + Vite + Pinia
 - 后端：Spring Boot 3 多模块（`web/security/core/admin/search/recommend/ai/gateway`）
 - 中间件（按需启用）：MySQL、Redis、RocketMQ、Elasticsearch、XXL-JOB
 
-> 说明：后端 Java 包名与 Maven 模块仍保留 `unimarket` 前缀（历史原因），对外项目名统一为 Nowl。
 
 ## 界面预览
 
@@ -72,7 +71,7 @@ mysql -u root -p < sql/nowl_init.sql
 
 ### 3) 配置环境变量
 
-参考根目录 `.env.example`（不要提交真实密钥）。注意：后端是通过“系统环境变量/IDE 运行配置”读取的，`.env` 文件不会被 Spring Boot 自动加载。
+参考根目录 `.env.example`。
 
 最少需要配置：
 
@@ -98,7 +97,7 @@ cd Nowl-backend
 mvn -q -DskipTests -pl unimarket-web -am spring-boot:run
 ```
 
-### 5) 启动网关（推荐）
+### 5) 启动网关
 
 前端默认把 `/api` 代理到网关（端口 `8090`），网关再转发到后端 `8080`。
 
@@ -125,7 +124,7 @@ npm run dev
 
 初始化脚本会写入角色与权限点，但不会创建默认管理员账号。你可以先在前端注册账号，然后在数据库手动绑定角色与管理范围。
 
-示例：把 `user_id=123` 绑定为超级管理员并赋予全范围（仅示例，自行替换 user_id）：
+示例：把 `user_id=123` 绑定为超级管理员并赋予全范围：
 
 ```sql
 INSERT INTO iam_user_role(user_id, role_id, status)
