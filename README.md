@@ -3,7 +3,7 @@
 Nowl 是一个校园二手交易与跑腿平台，基于vue+spring boot设计，有完善的功能，包括风控与搜推以及后台管理（IAM），引入Spring AI提供AI功能，有AI审核、AI估价及对话。项目是为毕业设计提供的，突出一个“校园安全”“校园隔离”，因此多租户隔离以校园、校区为单位。
 
 - 前端：Vue 3 + TypeScript + Vite + Pinia
-- 后端：Spring Boot 3 多模块（`web/security/core/admin/search/recommend/ai/gateway`）
+- 后端：Spring Boot 3、Spring security、Spring AI、JDK17
 - 中间件（按需启用）：MySQL、Redis、RocketMQ、Elasticsearch、XXL-JOB
 
 
