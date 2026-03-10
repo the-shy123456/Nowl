@@ -251,6 +251,21 @@ export interface RiskRuleItem {
   createTime?: string
 }
 
+export interface RiskModeItem {
+  mode: string
+}
+
+export interface RiskSubjectListItem {
+  id: number
+  subjectType: string
+  subjectId: string
+  reason?: string
+  source?: string
+  expireTime?: string
+  status: number
+  createTime?: string
+}
+
 export interface UserBehaviorControlItem {
   id: number
   userId: number
@@ -348,6 +363,58 @@ export interface AuditOverview {
   loginFailures: number
   highRiskLoginCount: number
   lastOperationTime?: string
+}
+
+export const getRiskMode = () => {
+  return request.get<RiskModeItem>(ADMIN_API.RISK_MODE)
+}
+
+export const updateRiskMode = (data: { mode: string }) => {
+  return request.put(ADMIN_API.RISK_MODE, data)
+}
+
+export const getBlacklist = (
+  params: PageQuery & {
+    subjectType?: string
+    subjectId?: string
+  },
+) => {
+  return request.get<PageResult<RiskSubjectListItem>>(ADMIN_API.RISK_BLACKLIST, { params })
+}
+
+export const upsertBlacklist = (data: {
+  subjectType: string
+  subjectId: string
+  reason?: string
+  expireTime?: string
+}) => {
+  return request.put(ADMIN_API.RISK_BLACKLIST, data)
+}
+
+export const updateBlacklistStatus = (id: number, status: number) => {
+  return request.put(ADMIN_API.RISK_BLACKLIST_STATUS(id), null, { params: { status } })
+}
+
+export const getWhitelist = (
+  params: PageQuery & {
+    subjectType?: string
+    subjectId?: string
+  },
+) => {
+  return request.get<PageResult<RiskSubjectListItem>>(ADMIN_API.RISK_WHITELIST, { params })
+}
+
+export const upsertWhitelist = (data: {
+  subjectType: string
+  subjectId: string
+  reason?: string
+  expireTime?: string
+}) => {
+  return request.put(ADMIN_API.RISK_WHITELIST, data)
+}
+
+export const updateWhitelistStatus = (id: number, status: number) => {
+  return request.put(ADMIN_API.RISK_WHITELIST_STATUS(id), null, { params: { status } })
 }
 
 export const getRiskEvents = (
@@ -547,3 +614,5 @@ export const adjustUserCredit = (data: { userId: number; change: number; reason:
 export const broadcastNotice = (data: { title: string; content: string }) => {
   return request.post(ADMIN_API.NOTICE_BROADCAST, data)
 }
+
+

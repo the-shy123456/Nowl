@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.unimarket.module.risk.mapper.RiskAuditBatchMapper">
+
+    <insert id="batchInsertEvents">
+        INSERT IGNORE INTO risk_event
+        (event_id, trace_id, event_type, subject_type, subject_id, school_code, campus_code, risk_features, raw_payload, event_time)
+        VALUES
+        <foreach collection="items" item="item" separator=",">
+            (#{item.eventId}, #{item.traceId}, #{item.eventType}, #{item.subjectType}, #{item.subjectId},
+            #{item.schoolCode}, #{item.campusCode}, #{item.riskFeatures}, #{item.rawPayload}, #{item.eventTime})
+        </foreach>
+    </insert>
+
+    <insert id="batchInsertDecisions">
+        INSERT IGNORE INTO risk_decision
+        (decision_id, event_id, decision_action, risk_level, risk_score, matched_rule_codes, decision_reason)
+        VALUES
+        <foreach collection="items" item="item" separator=",">
+            (#{item.decisionId}, #{item.eventId}, #{item.decisionAction}, #{item.riskLevel},
+            #{item.riskScore}, #{item.matchedRuleCodes}, #{item.decisionReason})
+        </foreach>
+    </insert>
+
+    <insert id="batchInsertCases">
+        INSERT IGNORE INTO risk_case
+        (case_id, event_id, decision_id, school_code, campus_code, case_status, assignee_id, result, result_reason)
+        VALUES
+        <foreach collection="items" item="item" separator=",">
+            (#{item.caseId}, #{item.eventId}, #{item.decisionId}, #{item.schoolCode}, #{item.campusCode},
+            #{item.caseStatus}, #{item.assigneeId}, #{item.result}, #{item.resultReason})
+        </foreach>
+    </insert>
+</mapper>

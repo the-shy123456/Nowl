@@ -23,6 +23,7 @@ import com.unimarket.module.risk.dto.RiskContext;
 import com.unimarket.module.risk.enums.RiskAction;
 import com.unimarket.module.risk.enums.RiskEventType;
 import com.unimarket.module.risk.service.RiskControlService;
+import com.unimarket.module.risk.service.RiskRealtimeStore;
 import com.unimarket.module.risk.vo.RiskDecisionResult;
 import com.unimarket.module.school.entity.SchoolInfo;
 import com.unimarket.module.school.mapper.SchoolInfoMapper;
@@ -79,6 +80,7 @@ public class UserServiceImpl extends ServiceImpl<UserInfoMapper, UserInfo> imple
     private final IamAccessService iamAccessService;
     private final RiskControlService riskControlService;
     private final AuditLoginTraceMapper auditLoginTraceMapper;
+    private final RiskRealtimeStore riskRealtimeStore;
     private final SmsUtils smsUtils;
     private final SystemProperties systemProperties;
     private final HttpRequestIpResolver httpRequestIpResolver;
@@ -767,6 +769,7 @@ public class UserServiceImpl extends ServiceImpl<UserInfoMapper, UserInfo> imple
         trace.setRiskLevel((riskLevel == null || riskLevel.isBlank()) ? "low" : riskLevel);
         trace.setCreateTime(LocalDateTime.now());
         auditLoginTraceMapper.insert(trace);
+        riskRealtimeStore.recordLoginOutcome(ip, result);
     }
 
     private String resolveRequestIp() {
@@ -820,3 +823,5 @@ public class UserServiceImpl extends ServiceImpl<UserInfoMapper, UserInfo> imple
         return phone.substring(0, 3) + "****" + phone.substring(phone.length() - 4);
     }
 }
+
+

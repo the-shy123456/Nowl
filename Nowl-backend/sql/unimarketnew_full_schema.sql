@@ -606,6 +606,10 @@ INSERT INTO `iam_permission` (`permission_code`, `permission_name`, `permission_
   ('admin:audit:operation:view', '查看后台操作审计', 'audit'),
   ('admin:audit:permission:view', '查看权限变更审计', 'audit'),
   ('admin:audit:login:view', '查看登录轨迹审计', 'audit'),
+  ('risk:mode:view', '查看风控模式', 'risk'),
+  ('risk:mode:manage', '管理风控模式', 'risk'),
+  ('risk:list:view', '查看黑白名单', 'risk'),
+  ('risk:list:manage', '管理黑白名单', 'risk'),
   ('risk:rule:manage', '管理风控规则', 'risk'),
   ('risk:event:view', '查看风控事件', 'risk'),
   ('risk:case:handle', '处理风控工单', 'risk'),
@@ -630,6 +634,10 @@ FROM iam_role r
 JOIN iam_permission p
 WHERE r.role_code = 'RISK_OPERATOR'
   AND p.permission_code IN (
+    'risk:mode:view',
+    'risk:mode:manage',
+    'risk:list:view',
+    'risk:list:manage',
     'risk:rule:manage',
     'risk:event:view',
     'risk:case:handle',
@@ -656,3 +664,4 @@ ON DUPLICATE KEY UPDATE
   `status` = 1;
 
 SET FOREIGN_KEY_CHECKS = 1;
+

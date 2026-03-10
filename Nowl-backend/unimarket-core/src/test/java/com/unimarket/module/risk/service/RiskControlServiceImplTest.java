@@ -1,21 +1,12 @@
 package com.unimarket.module.risk.service;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.unimarket.common.exception.BusinessException;
-import com.unimarket.module.audit.mapper.AuditLoginTraceMapper;
+import com.unimarket.module.risk.dto.RiskAuditMessage;
 import com.unimarket.module.risk.dto.RiskContext;
 import com.unimarket.module.risk.entity.RiskBehaviorControl;
-import com.unimarket.module.risk.entity.RiskCase;
-import com.unimarket.module.risk.entity.RiskDecision;
-import com.unimarket.module.risk.entity.RiskEvent;
 import com.unimarket.module.risk.entity.RiskRule;
 import com.unimarket.module.risk.enums.RiskAction;
-import com.unimarket.module.risk.mapper.RiskBlacklistMapper;
-import com.unimarket.module.risk.mapper.RiskCaseMapper;
-import com.unimarket.module.risk.mapper.RiskDecisionMapper;
-import com.unimarket.module.risk.mapper.RiskEventMapper;
-import com.unimarket.module.risk.mapper.RiskRuleMapper;
-import com.unimarket.module.risk.mapper.RiskWhitelistMapper;
+import com.unimarket.module.risk.enums.RiskMode;
 import com.unimarket.module.risk.service.impl.RiskControlServiceImpl;
 import com.unimarket.module.risk.vo.RiskDecisionResult;
 import org.junit.jupiter.api.DisplayName;
@@ -30,10 +21,10 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -42,35 +33,46 @@ import static org.mockito.Mockito.when;
 class RiskControlServiceImplTest {
 
     @Mock
-    private RiskEventMapper riskEventMapper;
-    @Mock
-    private RiskDecisionMapper riskDecisionMapper;
-    @Mock
-    private RiskRuleMapper riskRuleMapper;
+    private RiskPolicyCacheService riskPolicyCacheService;
     @Mock
     private RiskBehaviorControlService riskBehaviorControlService;
     @Mock
-    private RiskBlacklistMapper riskBlacklistMapper;
+    private RiskModeService riskModeService;
     @Mock
-    private RiskWhitelistMapper riskWhitelistMapper;
+    private RiskRealtimeStore riskRealtimeStore;
     @Mock
-    private RiskCaseMapper riskCaseMapper;
+    private RiskAuditPublisher riskAuditPublisher;
     @Mock
-    private AuditLoginTraceMapper auditLoginTraceMapper;
+    private RiskIdGenerator riskIdGenerator;
 
     @InjectMocks
     private RiskControlServiceImpl riskControlService;
 
     @Test
+    @DisplayName("evaluate: 关闭风控时直接放行")
+    void evaluate_offMode_allow() {
+        when(riskModeService.getMode()).thenReturn(RiskMode.OFF);
+
+        RiskDecisionResult result = riskControlService.evaluate(RiskContext.builder()
+                .eventType("CHAT_SEND")
+                .userId(1000L)
+                .build());
+
+        assertEquals(RiskAction.ALLOW, result.getAction());
+        assertEquals("风控已关闭", result.getReason());
+        verify(riskAuditPublisher, never()).publish(any(RiskAuditMessage.class));
+    }
+
+    @Test
     @DisplayName("evaluate: 用户行为管控优先于规则")
     void evaluate_behaviorControlFirst() {
+        when(riskModeService.getMode()).thenReturn(RiskMode.FULL);
+        when(riskIdGenerator.nextId()).thenReturn(101L, 201L);
         RiskBehaviorControl control = new RiskBehaviorControl();
         control.setControlAction("LIMIT");
         control.setReason("手动限流");
 
         when(riskBehaviorControlService.findMatchedControl(1001L, "CHAT_SEND")).thenReturn(control);
-
-        mockInsertIds();
 
         RiskDecisionResult result = riskControlService.evaluate(RiskContext.builder()
                 .eventType("CHAT_SEND")
@@ -82,16 +84,17 @@ class RiskControlServiceImplTest {
 
         assertEquals(RiskAction.LIMIT, result.getAction());
         assertTrue(result.getReason().contains("用户行为受控"));
-        verify(riskRuleMapper, never()).selectList(any(LambdaQueryWrapper.class));
-        verify(riskCaseMapper, never()).insert(any(RiskCase.class));
+        verify(riskPolicyCacheService, never()).getEnabledRules(any());
     }
 
     @Test
-    @DisplayName("evaluate: THRESHOLD 规则使用 maxCount 键")
-    void evaluate_thresholdRule_useMaxCount() {
+    @DisplayName("evaluate: THRESHOLD 规则使用 Redis 计数")
+    void evaluate_thresholdRule_useRealtimeCounter() {
+        when(riskModeService.getMode()).thenReturn(RiskMode.FULL);
+        when(riskIdGenerator.nextId()).thenReturn(101L, 201L);
         when(riskBehaviorControlService.findMatchedControl(2002L, "CHAT_SEND")).thenReturn(null);
-        when(riskWhitelistMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(0L);
-        when(riskBlacklistMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        when(riskPolicyCacheService.isWhitelisted("USER", "2002")).thenReturn(false);
+        when(riskPolicyCacheService.getActiveBlacklist("USER", "2002")).thenReturn(null);
 
         RiskRule rule = new RiskRule();
         rule.setRuleCode("RULE_CHAT_BURST");
@@ -99,10 +102,8 @@ class RiskControlServiceImplTest {
         rule.setRuleType("THRESHOLD");
         rule.setDecisionAction("LIMIT");
         rule.setRuleConfig("{\"maxCount\":1,\"windowMinutes\":10,\"subjectType\":\"USER\"}");
-        when(riskRuleMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(rule));
-        when(riskEventMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(1L);
-
-        mockInsertIds();
+        when(riskPolicyCacheService.getEnabledRules("CHAT_SEND")).thenReturn(List.of(rule));
+        when(riskRealtimeStore.countEvents("CHAT_SEND", "USER", "2002", 10)).thenReturn(1L);
 
         RiskDecisionResult result = riskControlService.evaluate(RiskContext.builder()
                 .eventType("CHAT_SEND")
@@ -113,15 +114,16 @@ class RiskControlServiceImplTest {
                 .build());
 
         assertEquals(RiskAction.LIMIT, result.getAction());
-        verify(riskCaseMapper, never()).insert(any(RiskCase.class));
     }
 
     @Test
-    @DisplayName("evaluate: REVIEW 决策会创建风险工单")
-    void evaluate_reviewRule_createCase() {
+    @DisplayName("evaluate: REVIEW 决策会产生风控工单消息")
+    void evaluate_reviewRule_publishCase() {
+        when(riskModeService.getMode()).thenReturn(RiskMode.FULL);
+        when(riskIdGenerator.nextId()).thenReturn(101L, 201L, 301L);
         when(riskBehaviorControlService.findMatchedControl(3003L, "CHAT_SEND")).thenReturn(null);
-        when(riskWhitelistMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(0L);
-        when(riskBlacklistMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        when(riskPolicyCacheService.isWhitelisted("USER", "3003")).thenReturn(false);
+        when(riskPolicyCacheService.getActiveBlacklist("USER", "3003")).thenReturn(null);
 
         RiskRule rule = new RiskRule();
         rule.setRuleCode("RULE_CHAT_KEYWORD");
@@ -129,38 +131,36 @@ class RiskControlServiceImplTest {
         rule.setRuleType("KEYWORD");
         rule.setDecisionAction("REVIEW");
         rule.setRuleConfig("{\"field\":\"content\",\"keywords\":[\"spam\"]}");
-        when(riskRuleMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(rule));
-
-        mockInsertIds();
+        when(riskPolicyCacheService.getEnabledRules("CHAT_SEND")).thenReturn(List.of(rule));
 
         RiskDecisionResult result = riskControlService.evaluate(RiskContext.builder()
                 .eventType("CHAT_SEND")
                 .userId(3003L)
+                .subjectType("USER")
+                .subjectId("3003")
                 .schoolCode("SC001")
                 .campusCode("CP001")
                 .rawPayload(Map.of("content", "this is spam message"))
                 .build());
 
         assertEquals(RiskAction.REVIEW, result.getAction());
-
-        ArgumentCaptor<RiskCase> caseCaptor = ArgumentCaptor.forClass(RiskCase.class);
-        verify(riskCaseMapper).insert(caseCaptor.capture());
-        RiskCase created = caseCaptor.getValue();
-        assertEquals("OPEN", created.getCaseStatus());
-        assertEquals("SC001", created.getSchoolCode());
-        assertEquals("CP001", created.getCampusCode());
-        assertEquals(101L, created.getEventId());
-        assertEquals(201L, created.getDecisionId());
+        ArgumentCaptor<RiskAuditMessage> captor = ArgumentCaptor.forClass(RiskAuditMessage.class);
+        verify(riskAuditPublisher).publish(captor.capture());
+        RiskAuditMessage message = captor.getValue();
+        assertNotNull(message.getRiskCase());
+        assertEquals(101L, message.getEvent().getEventId());
+        assertEquals(201L, message.getDecision().getDecisionId());
+        assertEquals(301L, message.getRiskCase().getCaseId());
     }
 
     @Test
     @DisplayName("evaluate: 登录IP失败画像触发 CHALLENGE")
     void evaluate_loginIpProfile_challenge() {
-        when(riskWhitelistMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(0L);
-        when(riskBlacklistMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
-        when(auditLoginTraceMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(10L);
-
-        mockInsertIds();
+        when(riskModeService.getMode()).thenReturn(RiskMode.FULL);
+        when(riskIdGenerator.nextId()).thenReturn(101L, 201L);
+        when(riskPolicyCacheService.isWhitelisted("IP", "10.0.0.8")).thenReturn(false);
+        when(riskPolicyCacheService.getActiveBlacklist("IP", "10.0.0.8")).thenReturn(null);
+        when(riskRealtimeStore.countLoginFailures("10.0.0.8", 30)).thenReturn(10L);
 
         RiskDecisionResult result = riskControlService.evaluate(RiskContext.builder()
                 .eventType("LOGIN")
@@ -175,18 +175,11 @@ class RiskControlServiceImplTest {
     @Test
     @DisplayName("evaluate: 设备指纹关联多账号触发 REVIEW")
     void evaluate_deviceFingerprint_review() {
-        when(riskWhitelistMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(0L);
-        when(riskBlacklistMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
-
-        RiskEvent e1 = new RiskEvent();
-        e1.setSubjectId("1001");
-        RiskEvent e2 = new RiskEvent();
-        e2.setSubjectId("1002");
-        RiskEvent e3 = new RiskEvent();
-        e3.setSubjectId("1003");
-        when(riskEventMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(e1, e2, e3));
-
-        mockInsertIds();
+        when(riskModeService.getMode()).thenReturn(RiskMode.FULL);
+        when(riskIdGenerator.nextId()).thenReturn(101L, 201L, 301L);
+        when(riskPolicyCacheService.isWhitelisted("IP", "10.0.0.9")).thenReturn(false);
+        when(riskPolicyCacheService.getActiveBlacklist("IP", "10.0.0.9")).thenReturn(null);
+        when(riskRealtimeStore.countDeviceSubjects("device-shared")).thenReturn(3);
 
         RiskDecisionResult result = riskControlService.evaluate(RiskContext.builder()
                 .eventType("CHAT_SEND")
@@ -196,17 +189,16 @@ class RiskControlServiceImplTest {
                 .build());
 
         assertEquals(RiskAction.REVIEW, result.getAction());
-        verify(riskCaseMapper).insert(any(RiskCase.class));
     }
 
     @Test
     @DisplayName("assertAllowed: CHALLENGE 返回统一业务提示")
     void assertAllowed_challenge_throwBusinessException() {
+        when(riskModeService.getMode()).thenReturn(RiskMode.FULL);
+        when(riskIdGenerator.nextId()).thenReturn(101L, 201L);
         RiskBehaviorControl control = new RiskBehaviorControl();
         control.setControlAction("CHALLENGE");
         when(riskBehaviorControlService.findMatchedControl(4004L, "LOGIN")).thenReturn(control);
-
-        mockInsertIds();
 
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> riskControlService.assertAllowed(RiskContext.builder()
@@ -215,19 +207,5 @@ class RiskControlServiceImplTest {
                         .build()));
 
         assertEquals("触发安全校验，请稍后重试", ex.getMessage());
-    }
-
-    private void mockInsertIds() {
-        doAnswer(invocation -> {
-            RiskEvent event = invocation.getArgument(0);
-            event.setEventId(101L);
-            return 1;
-        }).when(riskEventMapper).insert(any(RiskEvent.class));
-
-        doAnswer(invocation -> {
-            RiskDecision decision = invocation.getArgument(0);
-            decision.setDecisionId(201L);
-            return 1;
-        }).when(riskDecisionMapper).insert(any(RiskDecision.class));
     }
 }

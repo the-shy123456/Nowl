@@ -56,10 +56,13 @@ const {
   allOrders,
   disputes,
   allErrands,
+  riskMode,
   riskEvents,
   riskCases,
   riskRules,
   behaviorControls,
+  blacklistItems,
+  whitelistItems,
   iamRoles,
   userRoleBindings,
   adminScopeBindings,
@@ -89,6 +92,8 @@ const {
   disputeHandleClaimSummary,
   riskTab,
   auditTab,
+  riskSubjectTypeFilter,
+  riskSubjectIdFilter,
   riskEventTypeFilter,
   riskDecisionActionFilter,
   riskLevelFilter,
@@ -108,6 +113,10 @@ const {
   canSelectCampus,
   isCampusAdmin,
   effectiveSchoolCode,
+  canViewRiskMode,
+  canManageRiskMode,
+  canViewRiskList,
+  canManageRiskList,
   canViewRiskEvents,
   canHandleRiskCase,
   canManageRiskRule,
@@ -137,6 +146,11 @@ const {
   handleSearch,
   handleRefresh,
   handleRiskSearch,
+  handleUpdateRiskMode,
+  handleAddBlacklist,
+  handleToggleBlacklist,
+  handleAddWhitelist,
+  handleToggleWhitelist,
   handleBehaviorUserQuery,
   handleAddBehaviorControl,
   handleDisableBehavior,
@@ -175,7 +189,6 @@ const {
   handleCreateErrandIndex,
 } = useAdminDashboard()
 </script>
-
 <template>
   <div class="admin-owl min-h-screen flex">
     <!-- Sidebar -->
@@ -654,28 +667,38 @@ const {
 
           <AdminRiskCenterPanel
             v-else-if="activeMenu === 'risk-center'"
+            :can-view-risk-mode="canViewRiskMode"
+            :can-manage-risk-mode="canManageRiskMode"
+            :can-view-risk-list="canViewRiskList"
+            :can-manage-risk-list="canManageRiskList"
             :can-view-risk-events="canViewRiskEvents"
             :can-handle-risk-case="canHandleRiskCase"
             :can-manage-risk-rule="canManageRiskRule"
             :can-view-behavior-control="canViewBehaviorControl"
             :can-manage-behavior-control="canManageBehaviorControl"
             :risk-tab="riskTab"
+            :risk-mode="riskMode"
             :risk-event-type-filter="riskEventTypeFilter"
             :risk-decision-action-filter="riskDecisionActionFilter"
             :risk-level-filter="riskLevelFilter"
             :risk-case-status-filter="riskCaseStatusFilter"
             :risk-start-time-filter="riskStartTimeFilter"
             :risk-end-time-filter="riskEndTimeFilter"
+            :risk-subject-type-filter="riskSubjectTypeFilter"
+            :risk-subject-id-filter="riskSubjectIdFilter"
             :behavior-user-id-input="behaviorUserIdInput"
             :risk-events="riskEvents"
             :risk-cases="riskCases"
             :risk-rules="riskRules"
             :behavior-controls="behaviorControls"
+            :blacklist-items="blacklistItems"
+            :whitelist-items="whitelistItems"
             :page-num="pagination.pageNum"
             :page-size="pagination.pageSize"
             :total="pagination.total"
             @switch-risk-tab="switchRiskTab"
             @risk-search="handleRiskSearch"
+            @risk-mode-update="handleUpdateRiskMode"
             @behavior-user-query="handleBehaviorUserQuery"
             @update:risk-event-type-filter="riskEventTypeFilter = $event"
             @update:risk-decision-action-filter="riskDecisionActionFilter = $event"
@@ -683,12 +706,18 @@ const {
             @update:risk-case-status-filter="riskCaseStatusFilter = $event"
             @update:risk-start-time-filter="riskStartTimeFilter = $event"
             @update:risk-end-time-filter="riskEndTimeFilter = $event"
+            @update:risk-subject-type-filter="riskSubjectTypeFilter = $event"
+            @update:risk-subject-id-filter="riskSubjectIdFilter = $event"
             @update:behavior-user-id-input="behaviorUserIdInput = $event"
             @risk-case-process="handleRiskCaseProcess"
             @risk-rule-toggle="handleToggleRiskRule"
             @risk-rule-create="handleCreateRiskRule"
             @behavior-control-add="handleAddBehaviorControl"
             @behavior-control-disable="handleDisableBehavior"
+            @blacklist-add="handleAddBlacklist"
+            @blacklist-toggle="handleToggleBlacklist"
+            @whitelist-add="handleAddWhitelist"
+            @whitelist-toggle="handleToggleWhitelist"
             @page-change="handlePageChange"
             @size-change="handleSizeChange"
           />
@@ -1057,6 +1086,10 @@ const {
   box-shadow: 0 0 0 2px rgba(141, 110, 99, 0.2);
 }
 </style>
+
+
+
+
 
 
 

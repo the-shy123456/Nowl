@@ -8,25 +8,37 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.unimarket.admin.dto.RiskCaseHandleDTO;
 import com.unimarket.admin.dto.RiskCaseQueryDTO;
 import com.unimarket.admin.dto.RiskEventQueryDTO;
+import com.unimarket.admin.dto.RiskModeUpdateDTO;
 import com.unimarket.admin.dto.RiskRuleUpsertDTO;
+import com.unimarket.admin.dto.RiskSubjectListQueryDTO;
+import com.unimarket.admin.dto.RiskSubjectListUpsertDTO;
 import com.unimarket.admin.service.AdminRiskCenterService;
 import com.unimarket.admin.vo.RiskCaseVO;
 import com.unimarket.admin.vo.RiskEventVO;
+import com.unimarket.admin.vo.RiskModeVO;
 import com.unimarket.admin.vo.RiskRuleVO;
+import com.unimarket.admin.vo.RiskSubjectListVO;
 import com.unimarket.common.exception.BusinessException;
 import com.unimarket.common.result.PageQuery;
 import com.unimarket.common.result.PageResult;
 import com.unimarket.module.iam.entity.IamAdminScopeBinding;
 import com.unimarket.module.iam.service.IamAccessService;
+import com.unimarket.module.risk.entity.RiskBlacklist;
 import com.unimarket.module.risk.entity.RiskCase;
 import com.unimarket.module.risk.entity.RiskDecision;
 import com.unimarket.module.risk.entity.RiskEvent;
 import com.unimarket.module.risk.entity.RiskRule;
+import com.unimarket.module.risk.entity.RiskWhitelist;
 import com.unimarket.module.risk.enums.RiskAction;
+import com.unimarket.module.risk.enums.RiskMode;
+import com.unimarket.module.risk.mapper.RiskBlacklistMapper;
 import com.unimarket.module.risk.mapper.RiskCaseMapper;
 import com.unimarket.module.risk.mapper.RiskDecisionMapper;
 import com.unimarket.module.risk.mapper.RiskEventMapper;
 import com.unimarket.module.risk.mapper.RiskRuleMapper;
+import com.unimarket.module.risk.mapper.RiskWhitelistMapper;
+import com.unimarket.module.risk.service.RiskModeService;
+import com.unimarket.module.risk.service.RiskPolicyCacheService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -40,7 +52,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 管理后台风控中心服务实现
+ * 管理后台风控中心服务实现。
  */
 @Service
 @RequiredArgsConstructor
@@ -49,11 +61,16 @@ public class AdminRiskCenterServiceImpl implements AdminRiskCenterService {
     private static final String SCOPE_ALL = "ALL";
     private static final String SCOPE_SCHOOL = "SCHOOL";
     private static final String SCOPE_CAMPUS = "CAMPUS";
+    private static final Set<String> ALLOWED_SUBJECT_TYPES = Set.of("USER", "IP", "DEVICE", "CONTENT");
 
     private final RiskEventMapper riskEventMapper;
     private final RiskDecisionMapper riskDecisionMapper;
     private final RiskCaseMapper riskCaseMapper;
     private final RiskRuleMapper riskRuleMapper;
+    private final RiskBlacklistMapper riskBlacklistMapper;
+    private final RiskWhitelistMapper riskWhitelistMapper;
+    private final RiskModeService riskModeService;
+    private final RiskPolicyCacheService riskPolicyCacheService;
     private final IamAccessService iamAccessService;
 
     @Override
@@ -247,20 +264,17 @@ public class AdminRiskCenterServiceImpl implements AdminRiskCenterService {
 
         if (dto.getRuleId() == null) {
             riskRuleMapper.insert(target);
+            riskPolicyCacheService.evictRules(target.getEventType());
             return;
         }
         target.setUpdateTime(LocalDateTime.now());
         riskRuleMapper.updateById(target);
+        riskPolicyCacheService.evictRules(target.getEventType());
     }
 
     @Override
     public void updateRiskRuleStatus(Long ruleId, Integer status) {
-        if (ruleId == null || status == null) {
-            throw new BusinessException("参数不能为空");
-        }
-        if (status != 0 && status != 1) {
-            throw new BusinessException("状态仅支持0/1");
-        }
+        validateStatus(status);
         RiskRule rule = riskRuleMapper.selectById(ruleId);
         if (rule == null) {
             throw new BusinessException("风控规则不存在");
@@ -268,6 +282,137 @@ public class AdminRiskCenterServiceImpl implements AdminRiskCenterService {
         rule.setStatus(status);
         rule.setUpdateTime(LocalDateTime.now());
         riskRuleMapper.updateById(rule);
+        riskPolicyCacheService.evictRules(rule.getEventType());
+    }
+
+    @Override
+    public RiskModeVO getRiskMode(Long operatorId) {
+        assertAllScopeAdmin(operatorId);
+        RiskModeVO vo = new RiskModeVO();
+        vo.setMode(riskModeService.getMode().name());
+        return vo;
+    }
+
+    @Override
+    public void updateRiskMode(Long operatorId, RiskModeUpdateDTO dto) {
+        assertAllScopeAdmin(operatorId);
+        riskModeService.setMode(RiskMode.from(dto.getMode()));
+    }
+
+    @Override
+    public PageResult<RiskSubjectListVO> getBlacklistPage(Long operatorId, RiskSubjectListQueryDTO query) {
+        assertAllScopeAdmin(operatorId);
+        Page<RiskBlacklist> page = new Page<>(query.getPageNum(), query.getPageSize());
+        LambdaQueryWrapper<RiskBlacklist> wrapper = new LambdaQueryWrapper<RiskBlacklist>()
+                .eq(StrUtil.isNotBlank(query.getSubjectType()), RiskBlacklist::getSubjectType, query.getSubjectType().trim().toUpperCase())
+                .like(StrUtil.isNotBlank(query.getSubjectId()), RiskBlacklist::getSubjectId, query.getSubjectId().trim())
+                .orderByDesc(RiskBlacklist::getUpdateTime)
+                .orderByDesc(RiskBlacklist::getId);
+        Page<RiskBlacklist> result = riskBlacklistMapper.selectPage(page, wrapper);
+        return PageResult.of(result.getRecords().stream()
+                .map(item -> BeanUtil.copyProperties(item, RiskSubjectListVO.class))
+                .toList(), result.getTotal());
+    }
+
+    @Override
+    public PageResult<RiskSubjectListVO> getWhitelistPage(Long operatorId, RiskSubjectListQueryDTO query) {
+        assertAllScopeAdmin(operatorId);
+        Page<RiskWhitelist> page = new Page<>(query.getPageNum(), query.getPageSize());
+        LambdaQueryWrapper<RiskWhitelist> wrapper = new LambdaQueryWrapper<RiskWhitelist>()
+                .eq(StrUtil.isNotBlank(query.getSubjectType()), RiskWhitelist::getSubjectType, query.getSubjectType().trim().toUpperCase())
+                .like(StrUtil.isNotBlank(query.getSubjectId()), RiskWhitelist::getSubjectId, query.getSubjectId().trim())
+                .orderByDesc(RiskWhitelist::getUpdateTime)
+                .orderByDesc(RiskWhitelist::getId);
+        Page<RiskWhitelist> result = riskWhitelistMapper.selectPage(page, wrapper);
+        return PageResult.of(result.getRecords().stream()
+                .map(item -> BeanUtil.copyProperties(item, RiskSubjectListVO.class))
+                .toList(), result.getTotal());
+    }
+
+    @Override
+    public void upsertBlacklist(Long operatorId, RiskSubjectListUpsertDTO dto) {
+        assertAllScopeAdmin(operatorId);
+        String subjectType = normalizeSubjectType(dto.getSubjectType());
+        String subjectId = normalizeSubjectId(dto.getSubjectId());
+        RiskBlacklist existed = riskBlacklistMapper.selectOne(new LambdaQueryWrapper<RiskBlacklist>()
+                .eq(RiskBlacklist::getSubjectType, subjectType)
+                .eq(RiskBlacklist::getSubjectId, subjectId)
+                .last("LIMIT 1"));
+        if (existed == null) {
+            RiskBlacklist target = new RiskBlacklist();
+            target.setSubjectType(subjectType);
+            target.setSubjectId(subjectId);
+            target.setReason(dto.getReason());
+            target.setExpireTime(dto.getExpireTime());
+            target.setSource("MANUAL");
+            target.setStatus(1);
+            riskBlacklistMapper.insert(target);
+            riskPolicyCacheService.evictBlacklist(subjectType, subjectId);
+            return;
+        }
+        existed.setReason(dto.getReason());
+        existed.setExpireTime(dto.getExpireTime());
+        existed.setSource("MANUAL");
+        existed.setStatus(1);
+        existed.setUpdateTime(LocalDateTime.now());
+        riskBlacklistMapper.updateById(existed);
+        riskPolicyCacheService.evictBlacklist(subjectType, subjectId);
+    }
+
+    @Override
+    public void upsertWhitelist(Long operatorId, RiskSubjectListUpsertDTO dto) {
+        assertAllScopeAdmin(operatorId);
+        String subjectType = normalizeSubjectType(dto.getSubjectType());
+        String subjectId = normalizeSubjectId(dto.getSubjectId());
+        RiskWhitelist existed = riskWhitelistMapper.selectOne(new LambdaQueryWrapper<RiskWhitelist>()
+                .eq(RiskWhitelist::getSubjectType, subjectType)
+                .eq(RiskWhitelist::getSubjectId, subjectId)
+                .last("LIMIT 1"));
+        if (existed == null) {
+            RiskWhitelist target = new RiskWhitelist();
+            target.setSubjectType(subjectType);
+            target.setSubjectId(subjectId);
+            target.setReason(dto.getReason());
+            target.setExpireTime(dto.getExpireTime());
+            target.setStatus(1);
+            riskWhitelistMapper.insert(target);
+            riskPolicyCacheService.evictWhitelist(subjectType, subjectId);
+            return;
+        }
+        existed.setReason(dto.getReason());
+        existed.setExpireTime(dto.getExpireTime());
+        existed.setStatus(1);
+        existed.setUpdateTime(LocalDateTime.now());
+        riskWhitelistMapper.updateById(existed);
+        riskPolicyCacheService.evictWhitelist(subjectType, subjectId);
+    }
+
+    @Override
+    public void updateBlacklistStatus(Long operatorId, Long id, Integer status) {
+        assertAllScopeAdmin(operatorId);
+        validateStatus(status);
+        RiskBlacklist target = riskBlacklistMapper.selectById(id);
+        if (target == null) {
+            throw new BusinessException("黑名单记录不存在");
+        }
+        target.setStatus(status);
+        target.setUpdateTime(LocalDateTime.now());
+        riskBlacklistMapper.updateById(target);
+        riskPolicyCacheService.evictBlacklist(target.getSubjectType(), target.getSubjectId());
+    }
+
+    @Override
+    public void updateWhitelistStatus(Long operatorId, Long id, Integer status) {
+        assertAllScopeAdmin(operatorId);
+        validateStatus(status);
+        RiskWhitelist target = riskWhitelistMapper.selectById(id);
+        if (target == null) {
+            throw new BusinessException("白名单记录不存在");
+        }
+        target.setStatus(status);
+        target.setUpdateTime(LocalDateTime.now());
+        riskWhitelistMapper.updateById(target);
+        riskPolicyCacheService.evictWhitelist(target.getSubjectType(), target.getSubjectId());
     }
 
     private List<IamAdminScopeBinding> getOperatorScopes(Long operatorId) {
@@ -278,8 +423,41 @@ public class AdminRiskCenterServiceImpl implements AdminRiskCenterService {
         return scopes;
     }
 
+    private void assertAllScopeAdmin(Long operatorId) {
+        if (!containsAllScope(getOperatorScopes(operatorId))) {
+            throw new BusinessException("当前管理员仅能管理所属范围，无法操作全局风控配置");
+        }
+    }
+
     private boolean containsAllScope(List<IamAdminScopeBinding> scopes) {
         return scopes.stream().anyMatch(scope -> SCOPE_ALL.equalsIgnoreCase(scope.getScopeType()));
+    }
+
+    private void validateStatus(Integer status) {
+        if (status == null) {
+            throw new BusinessException("状态不能为空");
+        }
+        if (status != 0 && status != 1) {
+            throw new BusinessException("状态仅支持0/1");
+        }
+    }
+
+    private String normalizeSubjectType(String raw) {
+        if (raw == null || raw.isBlank()) {
+            throw new BusinessException("主体类型不能为空");
+        }
+        String subjectType = raw.trim().toUpperCase();
+        if (!ALLOWED_SUBJECT_TYPES.contains(subjectType)) {
+            throw new BusinessException("不支持的主体类型: " + subjectType);
+        }
+        return subjectType;
+    }
+
+    private String normalizeSubjectId(String raw) {
+        if (raw == null || raw.isBlank()) {
+            throw new BusinessException("主体标识不能为空");
+        }
+        return raw.trim();
     }
 
     private <T> void applyScopeFilter(LambdaQueryWrapper<T> wrapper,
@@ -317,3 +495,4 @@ public class AdminRiskCenterServiceImpl implements AdminRiskCenterService {
         });
     }
 }
+

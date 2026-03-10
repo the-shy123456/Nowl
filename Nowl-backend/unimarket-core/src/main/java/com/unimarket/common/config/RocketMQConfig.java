@@ -73,4 +73,14 @@ public class RocketMQConfig {
      * 商品同步消费者组
      */
     public static final String GOODS_SYNC_CONSUMER_GROUP = "goods-sync-consumer-group";
+    /**
+     * 风控审计 Topic
+     */
+    public static final String RISK_AUDIT_TOPIC = "risk-audit-topic";
+
+    /**
+     * 风控审计消费者组
+     */
+    public static final String RISK_AUDIT_CONSUMER_GROUP = "risk-audit-consumer-group";
 }
+

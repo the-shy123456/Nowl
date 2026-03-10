@@ -4,12 +4,17 @@ import com.unimarket.admin.dto.BehaviorControlUpsertDTO;
 import com.unimarket.admin.dto.RiskCaseHandleDTO;
 import com.unimarket.admin.dto.RiskCaseQueryDTO;
 import com.unimarket.admin.dto.RiskEventQueryDTO;
+import com.unimarket.admin.dto.RiskModeUpdateDTO;
 import com.unimarket.admin.dto.RiskRuleUpsertDTO;
+import com.unimarket.admin.dto.RiskSubjectListQueryDTO;
+import com.unimarket.admin.dto.RiskSubjectListUpsertDTO;
 import com.unimarket.admin.service.AdminRiskCenterService;
 import com.unimarket.admin.service.AdminRiskService;
 import com.unimarket.admin.vo.RiskCaseVO;
 import com.unimarket.admin.vo.RiskEventVO;
+import com.unimarket.admin.vo.RiskModeVO;
 import com.unimarket.admin.vo.RiskRuleVO;
+import com.unimarket.admin.vo.RiskSubjectListVO;
 import com.unimarket.admin.vo.UserBehaviorControlVO;
 import com.unimarket.common.result.PageQuery;
 import com.unimarket.common.result.PageResult;
@@ -33,7 +38,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 管理后台-风控管理接口
+ * 管理后台-风控管理接口。
  */
 @RestController
 @RequestMapping("/admin/risk")
@@ -44,9 +49,6 @@ public class AdminRiskController {
     private final AdminRiskService adminRiskService;
     private final AdminRiskCenterService adminRiskCenterService;
 
-    /**
-     * 查询某个用户的行为管控规则
-     */
     @GetMapping("/behavior-control/{userId}")
     @PreAuthorize("@iamAuth.hasPerm(authentication.principal.userId, 'admin:risk:behavior:view')")
     public Result<List<UserBehaviorControlVO>> listUserBehaviorControls(@PathVariable Long userId) {
@@ -54,9 +56,6 @@ public class AdminRiskController {
         return Result.success(adminRiskService.listUserBehaviorControls(operatorId, userId));
     }
 
-    /**
-     * 新增或更新用户行为管控
-     */
     @PutMapping("/behavior-control")
     @PreAuthorize("@iamAuth.hasPerm(authentication.principal.userId, 'admin:risk:behavior:manage')")
     public Result<Void> upsertBehaviorControl(@Valid @RequestBody BehaviorControlUpsertDTO dto) {
@@ -65,9 +64,6 @@ public class AdminRiskController {
         return Result.success();
     }
 
-    /**
-     * 关闭某条行为管控
-     */
     @DeleteMapping("/behavior-control/{controlId}")
     @PreAuthorize("@iamAuth.hasPerm(authentication.principal.userId, 'admin:risk:behavior:manage')")
     public Result<Void> disableBehaviorControl(@PathVariable Long controlId) {
@@ -76,9 +72,67 @@ public class AdminRiskController {
         return Result.success();
     }
 
-    /**
-     * 分页查询风控事件
-     */
+    @GetMapping("/mode")
+    @PreAuthorize("@iamAuth.hasPerm(authentication.principal.userId, 'risk:mode:view')")
+    public Result<RiskModeVO> getRiskMode() {
+        Long operatorId = UserContextHolder.getUserId();
+        return Result.success(adminRiskCenterService.getRiskMode(operatorId));
+    }
+
+    @PutMapping("/mode")
+    @PreAuthorize("@iamAuth.hasPerm(authentication.principal.userId, 'risk:mode:manage')")
+    public Result<Void> updateRiskMode(@Valid @RequestBody RiskModeUpdateDTO dto) {
+        Long operatorId = UserContextHolder.getUserId();
+        adminRiskCenterService.updateRiskMode(operatorId, dto);
+        return Result.success();
+    }
+
+    @GetMapping("/blacklist")
+    @PreAuthorize("@iamAuth.hasPerm(authentication.principal.userId, 'risk:list:view')")
+    public Result<PageResult<RiskSubjectListVO>> getBlacklist(@Valid RiskSubjectListQueryDTO query) {
+        Long operatorId = UserContextHolder.getUserId();
+        return Result.success(adminRiskCenterService.getBlacklistPage(operatorId, query));
+    }
+
+    @PutMapping("/blacklist")
+    @PreAuthorize("@iamAuth.hasPerm(authentication.principal.userId, 'risk:list:manage')")
+    public Result<Void> upsertBlacklist(@Valid @RequestBody RiskSubjectListUpsertDTO dto) {
+        Long operatorId = UserContextHolder.getUserId();
+        adminRiskCenterService.upsertBlacklist(operatorId, dto);
+        return Result.success();
+    }
+
+    @PutMapping("/blacklist/{id}/status")
+    @PreAuthorize("@iamAuth.hasPerm(authentication.principal.userId, 'risk:list:manage')")
+    public Result<Void> updateBlacklistStatus(@PathVariable Long id, @RequestParam @Min(0) @Max(1) Integer status) {
+        Long operatorId = UserContextHolder.getUserId();
+        adminRiskCenterService.updateBlacklistStatus(operatorId, id, status);
+        return Result.success();
+    }
+
+    @GetMapping("/whitelist")
+    @PreAuthorize("@iamAuth.hasPerm(authentication.principal.userId, 'risk:list:view')")
+    public Result<PageResult<RiskSubjectListVO>> getWhitelist(@Valid RiskSubjectListQueryDTO query) {
+        Long operatorId = UserContextHolder.getUserId();
+        return Result.success(adminRiskCenterService.getWhitelistPage(operatorId, query));
+    }
+
+    @PutMapping("/whitelist")
+    @PreAuthorize("@iamAuth.hasPerm(authentication.principal.userId, 'risk:list:manage')")
+    public Result<Void> upsertWhitelist(@Valid @RequestBody RiskSubjectListUpsertDTO dto) {
+        Long operatorId = UserContextHolder.getUserId();
+        adminRiskCenterService.upsertWhitelist(operatorId, dto);
+        return Result.success();
+    }
+
+    @PutMapping("/whitelist/{id}/status")
+    @PreAuthorize("@iamAuth.hasPerm(authentication.principal.userId, 'risk:list:manage')")
+    public Result<Void> updateWhitelistStatus(@PathVariable Long id, @RequestParam @Min(0) @Max(1) Integer status) {
+        Long operatorId = UserContextHolder.getUserId();
+        adminRiskCenterService.updateWhitelistStatus(operatorId, id, status);
+        return Result.success();
+    }
+
     @GetMapping("/events")
     @PreAuthorize("@iamAuth.hasPerm(authentication.principal.userId, 'risk:event:view')")
     public Result<PageResult<RiskEventVO>> getRiskEvents(@Valid RiskEventQueryDTO query) {
@@ -86,9 +140,6 @@ public class AdminRiskController {
         return Result.success(adminRiskCenterService.getRiskEventPage(operatorId, query));
     }
 
-    /**
-     * 分页查询风控工单
-     */
     @GetMapping("/cases")
     @PreAuthorize("@iamAuth.hasPerm(authentication.principal.userId, 'risk:case:handle')")
     public Result<PageResult<RiskCaseVO>> getRiskCases(@Valid RiskCaseQueryDTO query) {
@@ -96,9 +147,6 @@ public class AdminRiskController {
         return Result.success(adminRiskCenterService.getRiskCasePage(operatorId, query));
     }
 
-    /**
-     * 处理风控工单
-     */
     @PutMapping("/case/handle")
     @PreAuthorize("@iamAuth.hasPerm(authentication.principal.userId, 'risk:case:handle')")
     public Result<Void> handleRiskCase(@Valid @RequestBody RiskCaseHandleDTO dto) {
@@ -107,9 +155,6 @@ public class AdminRiskController {
         return Result.success();
     }
 
-    /**
-     * 分页查询风控规则
-     */
     @GetMapping("/rules")
     @PreAuthorize("@iamAuth.hasPerm(authentication.principal.userId, 'risk:rule:manage')")
     public Result<PageResult<RiskRuleVO>> getRiskRules(@Valid PageQuery query,
@@ -117,9 +162,6 @@ public class AdminRiskController {
         return Result.success(adminRiskCenterService.getRiskRulePage(query, eventType));
     }
 
-    /**
-     * 新增/更新风控规则
-     */
     @PutMapping("/rule")
     @PreAuthorize("@iamAuth.hasPerm(authentication.principal.userId, 'risk:rule:manage')")
     public Result<Void> upsertRiskRule(@Valid @RequestBody RiskRuleUpsertDTO dto) {
@@ -127,9 +169,6 @@ public class AdminRiskController {
         return Result.success();
     }
 
-    /**
-     * 启用/禁用风控规则
-     */
     @PutMapping("/rule/{ruleId}/status")
     @PreAuthorize("@iamAuth.hasPerm(authentication.principal.userId, 'risk:rule:manage')")
     public Result<Void> updateRiskRuleStatus(@PathVariable Long ruleId, @RequestParam @Min(0) @Max(1) Integer status) {

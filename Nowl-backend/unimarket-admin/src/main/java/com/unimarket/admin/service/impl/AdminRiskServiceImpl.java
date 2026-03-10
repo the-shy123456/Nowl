@@ -10,6 +10,7 @@ import com.unimarket.module.risk.entity.RiskBehaviorControl;
 import com.unimarket.module.risk.enums.RiskAction;
 import com.unimarket.module.risk.enums.RiskEventType;
 import com.unimarket.module.risk.mapper.RiskBehaviorControlMapper;
+import com.unimarket.module.risk.service.RiskBehaviorControlService;
 import com.unimarket.module.user.entity.UserInfo;
 import com.unimarket.module.user.mapper.UserInfoMapper;
 import lombok.RequiredArgsConstructor;
@@ -21,7 +22,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * 管理后台-风控服务实现
+ * 管理后台-风控服务实现。
  */
 @Service
 @RequiredArgsConstructor
@@ -44,6 +45,7 @@ public class AdminRiskServiceImpl implements AdminRiskService {
     private final RiskBehaviorControlMapper riskBehaviorControlMapper;
     private final UserInfoMapper userInfoMapper;
     private final IamAccessService iamAccessService;
+    private final RiskBehaviorControlService riskBehaviorControlService;
 
     @Override
     public List<UserBehaviorControlVO> listUserBehaviorControls(Long operatorId, Long targetUserId) {
@@ -104,6 +106,7 @@ public class AdminRiskServiceImpl implements AdminRiskService {
             control.setStatus(STATUS_ENABLED);
             control.setOperatorId(operatorId);
             riskBehaviorControlMapper.insert(control);
+            riskBehaviorControlService.evictControl(dto.getUserId(), eventType);
             return;
         }
 
@@ -114,6 +117,7 @@ public class AdminRiskServiceImpl implements AdminRiskService {
         existed.setStatus(STATUS_ENABLED);
         existed.setUpdateTime(LocalDateTime.now());
         riskBehaviorControlMapper.updateById(existed);
+        riskBehaviorControlService.evictControl(dto.getUserId(), eventType);
     }
 
     @Override
@@ -132,6 +136,7 @@ public class AdminRiskServiceImpl implements AdminRiskService {
         control.setOperatorId(operatorId);
         control.setUpdateTime(LocalDateTime.now());
         riskBehaviorControlMapper.updateById(control);
+        riskBehaviorControlService.evictControl(control.getUserId(), control.getEventType());
     }
 
     private UserInfo getTargetUserAndCheckScope(Long operatorId, Long targetUserId) {

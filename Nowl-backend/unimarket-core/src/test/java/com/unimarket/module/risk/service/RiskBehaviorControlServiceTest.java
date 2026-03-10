@@ -1,5 +1,6 @@
 package com.unimarket.module.risk.service;
 
+import com.unimarket.common.utils.RedisCache;
 import com.unimarket.module.risk.entity.RiskBehaviorControl;
 import com.unimarket.module.risk.mapper.RiskBehaviorControlMapper;
 import org.junit.jupiter.api.DisplayName;
@@ -22,6 +23,8 @@ class RiskBehaviorControlServiceTest {
 
     @Mock
     private RiskBehaviorControlMapper riskBehaviorControlMapper;
+    @Mock
+    private RedisCache redisCache;
 
     @InjectMocks
     private RiskBehaviorControlService riskBehaviorControlService;
@@ -59,7 +62,7 @@ class RiskBehaviorControlServiceTest {
     void isHardBlocked_rejectTrue() {
         RiskBehaviorControl control = new RiskBehaviorControl();
         control.setControlAction("REJECT");
-        when(riskBehaviorControlMapper.selectOne(any())).thenReturn(control);
+        when(riskBehaviorControlMapper.selectOne(any())).thenReturn(control, control);
 
         assertTrue(riskBehaviorControlService.isHardBlocked(1003L, "LOGIN"));
         assertFalse(riskBehaviorControlService.isAllowed(1003L, "LOGIN"));
@@ -70,7 +73,7 @@ class RiskBehaviorControlServiceTest {
     void isAllowed_nonRejectAllowed() {
         RiskBehaviorControl control = new RiskBehaviorControl();
         control.setControlAction("REVIEW");
-        when(riskBehaviorControlMapper.selectOne(any())).thenReturn(control);
+        when(riskBehaviorControlMapper.selectOne(any())).thenReturn(control, control);
 
         assertFalse(riskBehaviorControlService.isHardBlocked(1004L, "CHAT_SEND"));
         assertTrue(riskBehaviorControlService.isAllowed(1004L, "CHAT_SEND"));

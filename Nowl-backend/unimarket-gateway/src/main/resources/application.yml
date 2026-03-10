@@ -4,6 +4,13 @@ server:
 spring:
   application:
     name: unimarket-gateway
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DATABASE:0}
+      timeout: ${REDIS_TIMEOUT:3000ms}
+      password: ${REDIS_PASSWORD:}
   cloud:
     gateway:
       httpclient:
@@ -53,3 +60,4 @@ security:
 logging:
   level:
     com.unimarket.gateway: info
+

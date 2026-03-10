@@ -180,6 +180,11 @@ export const ADMIN_API = {
   ERRAND_AUDIT: `${API_BASE.ADMIN}/errand/audit`,
   DISPUTE_LIST: `${API_BASE.ADMIN}/dispute/list`,
   DISPUTE_HANDLE: `${API_BASE.ADMIN}/dispute/handle`,
+  RISK_MODE: `${API_BASE.ADMIN}/risk/mode`,
+  RISK_BLACKLIST: `${API_BASE.ADMIN}/risk/blacklist`,
+  RISK_BLACKLIST_STATUS: (id: number | string) => `${API_BASE.ADMIN}/risk/blacklist/${id}/status`,
+  RISK_WHITELIST: `${API_BASE.ADMIN}/risk/whitelist`,
+  RISK_WHITELIST_STATUS: (id: number | string) => `${API_BASE.ADMIN}/risk/whitelist/${id}/status`,
   RISK_EVENTS: `${API_BASE.ADMIN}/risk/events`,
   RISK_CASES: `${API_BASE.ADMIN}/risk/cases`,
   RISK_CASE_HANDLE: `${API_BASE.ADMIN}/risk/case/handle`,
@@ -231,3 +236,4 @@ export const API_PATHS = {
 } as const;
 
 export default API_PATHS;
+

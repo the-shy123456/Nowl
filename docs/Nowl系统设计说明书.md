@@ -481,8 +481,11 @@ try {
 
 入口包：
 
-- `com.unimarket.module.risk.service.impl.RiskControlServiceImpl`（评估引擎：管控/黑白名单/高级信号/规则引擎）
-- `com.unimarket.module.risk.service.RiskBehaviorControlService`（行为管控查询）
+- `com.unimarket.module.risk.service.impl.RiskControlServiceImpl`（在线评估引擎：模式开关 / 行为管控 / 黑白名单 / 高级信号 / 规则引擎）
+- `com.unimarket.module.risk.service.RiskBehaviorControlService`（行为管控查询 + Redis 缓存）
+- `com.unimarket.module.risk.service.RiskPolicyCacheService`（规则、黑白名单缓存）
+- `com.unimarket.module.risk.service.RiskRealtimeStore`（Redis 实时计数、登录失败画像、设备指纹关联）
+- `com.unimarket.module.risk.service.RiskAuditPublisher` / `RiskAuditBatchBuffer`（MQ 异步审计 + Redis 兜底 + 批量落库）
 - `com.unimarket.module.risk.enums.RiskEventType`（事件类型常量）
 
 #### 4.3.7 AI 编排域（aiassistant）
@@ -534,7 +537,7 @@ unimarket-admin/src/main/java/com/unimarket/admin
 - `AdminDisputeDomainService`：纠纷处理、退款裁定、幂等控制。
 - `AdminGoodsDomainService`：商品人工审核。
 - `AdminActionLockSupport`：后台关键操作分布式锁模板。
-- `AdminRiskController` / `AdminRiskCenterServiceImpl`：风控中心（事件、工单、规则）与行为管控（封禁/限流）。
+- `AdminRiskController` / `AdminRiskCenterServiceImpl`：风控中心（模式、黑白名单、事件、工单、规则）与行为管控。
 
 代码样例：
 
@@ -775,22 +778,20 @@ unimarket-gateway/src/main/java/com/unimarket/gateway
 关键类：
 
 - `GatewayTraceFilter`：注入 `X-Trace-Id`。
-- `GatewayRateLimitFilter`：路径+IP 窗口限流。
+- `GatewayRateLimitFilter`：Redis 分布式限流，Redis 不可用时退化为本地窗口限流。
 - `GatewayAuditFilter`：记录高风险/异常请求日志。
 
 代码样例：
 
 ```java
-// unimarket-gateway/src/main/java/com/unimarket/gateway/filter/GatewayRateLimitFilter.java
-private static final long WINDOW_MS = 60_000L;
-private static final int ADMIN_LIMIT = 240;
-private static final int LOGIN_LIMIT = 60;
-
-if (counter.count > limit) {
+// GatewayRateLimitFilter.java
+Long total = stringRedisTemplate.execute(
+    INCREMENT_SCRIPT,
+    Collections.singletonList(key),
+    String.valueOf(REDIS_KEY_TTL_MS)
+);
+if (current > limit) {
     exchange.getResponse().setStatusCode(HttpStatus.TOO_MANY_REQUESTS);
-    String payload = "{\"code\":429,\"message\":\"请求过于频繁，请稍后再试\"}";
-    return exchange.getResponse().writeWith(Mono.just(
-            exchange.getResponse().bufferFactory().wrap(payload.getBytes(StandardCharsets.UTF_8))));
 }
 ```
 
@@ -915,13 +916,22 @@ return iamAccessService.canManageScope(userId, record.getSchoolCode(), record.ge
 
 #### 5.3.1 风控是如何实现的
 
+当前版本采用“在线实时判定 + 异步审计落库”的企业化实现：
+
+1. 在线链路只做快速判断，不同步写 `risk_event / risk_decision / risk_case`。
+2. 风控模式支持 `OFF / BASIC / FULL` 三档，由 Redis 保存全局模式。
+3. 行为管控、黑白名单、规则配置以 MySQL 为配置源，但在线读取会走 Redis/本地缓存。
+4. 高频检测、高级信号统一走 Redis 实时态。
+5. 审计消息先发 RocketMQ，失败时写 Redis 兜底队列，再失败则退回本地批量缓冲。
+
 风控决策顺序（固定链路）：
 
-1. 用户行为管控（`risk_behavior_control`）。
-2. 白名单（`risk_whitelist`）。
-3. 黑名单（`risk_blacklist`）。
-4. 高级信号（IP失败、设备指纹、IP突发）。
-5. 规则引擎（`risk_rule`，支持 `THRESHOLD` / `KEYWORD`）。
+1. 风控模式：`OFF` 直接放行，`BASIC` 仅启用人工管控与黑白名单，`FULL` 走完整链路。
+2. 用户行为管控（`risk_behavior_control`）。
+3. 白名单（`risk_whitelist`）。
+4. 黑名单（`risk_blacklist`）。
+5. 高级信号（IP失败、设备指纹、IP突发）。
+6. 规则引擎（`risk_rule`，支持 `THRESHOLD` / `KEYWORD`）。
 
 风控事件类型（代码常量）：
 
@@ -940,13 +950,12 @@ public static final String FOLLOW_USER = "FOLLOW_USER";
 
 ```java
 // RiskControlServiceImpl.java
-DecisionDraft behaviorControlDecision = matchBehaviorControl(context);
-if (behaviorControlDecision != null) return behaviorControlDecision;
-if (inWhitelist(context.getSubjectType(), context.getSubjectId())) return DecisionDraft.allow("命中风控白名单");
-RiskBlacklist blacklist = findActiveBlacklist(context.getSubjectType(), context.getSubjectId());
-if (blacklist != null) return DecisionDraft.reject("命中风控黑名单: " + safeReason(blacklist.getReason()));
-DecisionDraft advancedDecision = matchAdvancedSignals(context);
-if (advancedDecision != null) return advancedDecision;
+RiskMode mode = riskModeService.getMode();
+if (mode == RiskMode.OFF) return allow("风控已关闭");
+if (riskPolicyCacheService.isWhitelisted(subjectType, subjectId)) return allow("命中风控白名单");
+RiskBlacklist blacklist = riskPolicyCacheService.getActiveBlacklist(subjectType, subjectId);
+if (blacklist != null) return reject("命中风控黑名单");
+if (mode == RiskMode.BASIC) return allow("风控基础模式");
 ```
 
 #### 5.3.2 风控能控制多久
@@ -962,7 +971,7 @@ if (advancedDecision != null) return advancedDecision;
 - 表字段：`risk_blacklist.expire_time`、`risk_whitelist.expire_time`。
 - 同样支持“长期/定时失效”。
 
-3. 高频检测窗口（代码写死窗口）：
+3. 高频检测窗口（Redis 实时态）：
 - 登录 IP 失败：30 分钟窗口。
 - 设备指纹关联：24 小时窗口。
 - IP 突发行为：5 分钟窗口。
@@ -980,16 +989,19 @@ if (advancedDecision != null) return advancedDecision;
 ```
 
 ```java
-// RiskControlService.java (高级信号)
-LocalDateTime since = LocalDateTime.now().minusMinutes(30); // 登录IP失败窗口
-LocalDateTime since = LocalDateTime.now().minusHours(24);   // 设备指纹窗口
-LocalDateTime since = LocalDateTime.now().minusMinutes(5);  // IP突发窗口
+// RiskRealtimeStore.java
+long loginFails = countLoginFailures(ip, 30);
+int linkedUsers = countDeviceSubjects(fingerprint);
+long burstCount = countEvents(eventType, "IP", ip, 5);
 ```
 
 #### 5.3.3 风控规则怎么配置
 
 后台接口：
 
+- `GET /admin/risk/mode`、`PUT /admin/risk/mode`：查看/更新风控模式。
+- `GET /admin/risk/blacklist`、`PUT /admin/risk/blacklist`、`PUT /admin/risk/blacklist/{id}/status`：管理黑名单。
+- `GET /admin/risk/whitelist`、`PUT /admin/risk/whitelist`、`PUT /admin/risk/whitelist/{id}/status`：管理白名单。
 - `PUT /admin/risk/rule`：新增/更新规则。
 - `PUT /admin/risk/rule/{ruleId}/status`：启用/禁用规则。
 - `PUT /admin/risk/behavior-control`：新增/更新用户行为管控。
@@ -1001,6 +1013,27 @@ INSERT INTO `risk_rule` (`rule_code`, `rule_name`, `event_type`, `rule_type`, `r
 VALUES
 ('RULE_LOGIN_BURST_IP', '登录频控-IP窗口限流', 'LOGIN', 'THRESHOLD', '{"windowMinutes":10,"maxCount":15,"subjectType":"IP"}', 'LIMIT', 10),
 ('RULE_CHAT_SENSITIVE_KEYWORD', '私聊敏感词复核', 'CHAT_SEND', 'KEYWORD', '{"field":"content","keywords":["加微信","vx","刷单","博彩","毒品","代考"]}', 'REVIEW', 30);
+```
+
+#### 5.3.4 审计与容错策略
+
+风控审计采用异步批量策略：
+
+1. 在线判定完成后生成 `eventId / decisionId / traceId`。
+2. 通过 RocketMQ 投递风控审计消息。
+3. 消费端按批次写入 `risk_event / risk_decision / risk_case`。
+4. MQ 发送失败时，先写 Redis 兜底队列。
+5. Redis 兜底重放仍失败时，回退到进程内批量缓冲，避免消息静默丢失。
+
+```java
+// RiskAuditPublisher.java
+try {
+    rocketMQTemplate.syncSend(RISK_AUDIT_TOPIC, message, SEND_TIMEOUT_MS);
+} catch (Exception ex) {
+    if (!enqueueFallback(message)) {
+        riskAuditBatchBuffer.enqueue(message);
+    }
+}
 ```
 
 ### 5.4 AI 方案（能力层与业务层分离）
@@ -2050,6 +2083,7 @@ return jsonObject.getInt("code") == 200;
 - PRIMARY KEY (`id`)
 - KEY `idx_audit_login_user_time` (`user_id`, `create_time`)
 - KEY `idx_audit_login_ip_time` (`ip`, `create_time`)
+
 
 
 

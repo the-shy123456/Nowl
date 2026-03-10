@@ -3,10 +3,8 @@ package com.unimarket.module.risk.service.impl;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.unimarket.common.exception.BusinessException;
-import com.unimarket.module.audit.entity.AuditLoginTrace;
-import com.unimarket.module.audit.mapper.AuditLoginTraceMapper;
+import com.unimarket.module.risk.dto.RiskAuditMessage;
 import com.unimarket.module.risk.dto.RiskContext;
 import com.unimarket.module.risk.entity.RiskBehaviorControl;
 import com.unimarket.module.risk.entity.RiskBlacklist;
@@ -14,17 +12,16 @@ import com.unimarket.module.risk.entity.RiskCase;
 import com.unimarket.module.risk.entity.RiskDecision;
 import com.unimarket.module.risk.entity.RiskEvent;
 import com.unimarket.module.risk.entity.RiskRule;
-import com.unimarket.module.risk.entity.RiskWhitelist;
 import com.unimarket.module.risk.enums.RiskAction;
 import com.unimarket.module.risk.enums.RiskLevel;
-import com.unimarket.module.risk.mapper.RiskBlacklistMapper;
-import com.unimarket.module.risk.mapper.RiskCaseMapper;
-import com.unimarket.module.risk.mapper.RiskDecisionMapper;
-import com.unimarket.module.risk.mapper.RiskEventMapper;
-import com.unimarket.module.risk.mapper.RiskRuleMapper;
-import com.unimarket.module.risk.mapper.RiskWhitelistMapper;
+import com.unimarket.module.risk.enums.RiskMode;
+import com.unimarket.module.risk.service.RiskAuditPublisher;
 import com.unimarket.module.risk.service.RiskBehaviorControlService;
 import com.unimarket.module.risk.service.RiskControlService;
+import com.unimarket.module.risk.service.RiskIdGenerator;
+import com.unimarket.module.risk.service.RiskModeService;
+import com.unimarket.module.risk.service.RiskPolicyCacheService;
+import com.unimarket.module.risk.service.RiskRealtimeStore;
 import com.unimarket.module.risk.vo.RiskDecisionResult;
 import io.micrometer.core.instrument.Metrics;
 import lombok.RequiredArgsConstructor;
@@ -36,15 +33,13 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.UUID;
 
 /**
- * 风控服务实现
+ * 风控服务实现。
  */
 @Slf4j
 @Service
@@ -52,51 +47,46 @@ import java.util.UUID;
 public class RiskControlServiceImpl implements RiskControlService {
 
     private static final String SUBJECT_USER = "USER";
-    private static final int STATUS_ENABLED = 1;
 
-    private final RiskEventMapper riskEventMapper;
-    private final RiskDecisionMapper riskDecisionMapper;
-    private final RiskRuleMapper riskRuleMapper;
+    private final RiskPolicyCacheService riskPolicyCacheService;
     private final RiskBehaviorControlService riskBehaviorControlService;
-    private final RiskBlacklistMapper riskBlacklistMapper;
-    private final RiskWhitelistMapper riskWhitelistMapper;
-    private final RiskCaseMapper riskCaseMapper;
-    private final AuditLoginTraceMapper auditLoginTraceMapper;
+    private final RiskModeService riskModeService;
+    private final RiskRealtimeStore riskRealtimeStore;
+    private final RiskAuditPublisher riskAuditPublisher;
+    private final RiskIdGenerator riskIdGenerator;
 
     @Override
     public RiskDecisionResult evaluate(RiskContext context) {
         long startNs = System.nanoTime();
         RiskContext normalized = normalizeContext(context);
-        RiskEvent event = createRiskEvent(normalized);
+        RiskMode mode = riskModeService.getMode();
 
-        DecisionDraft decisionDraft = resolveDecision(normalized);
-
-        RiskDecision decision = new RiskDecision();
-        decision.setEventId(event.getEventId());
-        decision.setDecisionAction(decisionDraft.action.name());
-        decision.setRiskLevel(decisionDraft.riskLevel.getCode());
-        decision.setRiskScore(BigDecimal.valueOf(decisionDraft.riskScore));
-        decision.setMatchedRuleCodes(JSON.toJSONString(decisionDraft.matchedRuleCodes));
-        decision.setDecisionReason(decisionDraft.reason);
-        riskDecisionMapper.insert(decision);
-
-        if (decisionDraft.action == RiskAction.REVIEW) {
-            RiskCase riskCase = new RiskCase();
-            riskCase.setEventId(event.getEventId());
-            riskCase.setDecisionId(decision.getDecisionId());
-            riskCase.setSchoolCode(normalized.getSchoolCode());
-            riskCase.setCampusCode(normalized.getCampusCode());
-            riskCase.setCaseStatus("OPEN");
-            riskCaseMapper.insert(riskCase);
+        if (mode == RiskMode.OFF) {
+            recordMetrics(normalized.getEventType(), RiskAction.ALLOW, RiskLevel.LOW, startNs);
+            return RiskDecisionResult.builder()
+                    .action(RiskAction.ALLOW)
+                    .riskLevel(RiskLevel.LOW.getCode())
+                    .riskScore(0D)
+                    .reason("风控已关闭")
+                    .build();
         }
 
-        Metrics.counter("unimarket.risk.decision.total",
-                "eventType", normalized.getEventType(),
-                "action", decisionDraft.action.name(),
-                "riskLevel", decisionDraft.riskLevel.getCode()).increment();
-        Metrics.timer("unimarket.risk.evaluate.duration", "eventType", normalized.getEventType())
-                .record(System.nanoTime() - startNs, java.util.concurrent.TimeUnit.NANOSECONDS);
+        LocalDateTime eventTime = LocalDateTime.now();
+        RiskEvent event = buildRiskEvent(normalized, eventTime);
+        if (mode == RiskMode.FULL) {
+            riskRealtimeStore.recordEvaluation(normalized, event.getTraceId(), eventTime);
+        }
 
+        DecisionDraft decisionDraft = resolveDecision(normalized, mode);
+        RiskDecision decision = buildRiskDecision(event.getEventId(), decisionDraft);
+        RiskCase riskCase = decisionDraft.action == RiskAction.REVIEW ? buildRiskCase(event, decision) : null;
+        riskAuditPublisher.publish(RiskAuditMessage.builder()
+                .event(event)
+                .decision(decision)
+                .riskCase(riskCase)
+                .build());
+
+        recordMetrics(normalized.getEventType(), decisionDraft.action, decisionDraft.riskLevel, startNs);
         return RiskDecisionResult.builder()
                 .eventId(event.getEventId())
                 .decisionId(decision.getDecisionId())
@@ -129,6 +119,15 @@ public class RiskControlServiceImpl implements RiskControlService {
             throw new BusinessException("操作过于频繁，请稍后再试");
         }
         throw new BusinessException(reason);
+    }
+
+    private void recordMetrics(String eventType, RiskAction action, RiskLevel level, long startNs) {
+        Metrics.counter("unimarket.risk.decision.total",
+                "eventType", eventType,
+                "action", action.name(),
+                "riskLevel", level.getCode()).increment();
+        Metrics.timer("unimarket.risk.evaluate.duration", "eventType", eventType)
+                .record(System.nanoTime() - startNs, java.util.concurrent.TimeUnit.NANOSECONDS);
     }
 
     private RiskContext normalizeContext(RiskContext context) {
@@ -191,8 +190,9 @@ public class RiskControlServiceImpl implements RiskControlService {
                 .build();
     }
 
-    private RiskEvent createRiskEvent(RiskContext context) {
+    private RiskEvent buildRiskEvent(RiskContext context, LocalDateTime eventTime) {
         RiskEvent event = new RiskEvent();
+        event.setEventId(riskIdGenerator.nextId());
         event.setTraceId(UUID.randomUUID().toString().replace("-", ""));
         event.setEventType(context.getEventType());
         event.setSubjectType(context.getSubjectType());
@@ -201,9 +201,31 @@ public class RiskControlServiceImpl implements RiskControlService {
         event.setCampusCode(context.getCampusCode());
         event.setRiskFeatures(JSON.toJSONString(context.getFeatures()));
         event.setRawPayload(JSON.toJSONString(context.getRawPayload()));
-        event.setEventTime(LocalDateTime.now());
-        riskEventMapper.insert(event);
+        event.setEventTime(eventTime);
         return event;
+    }
+
+    private RiskDecision buildRiskDecision(Long eventId, DecisionDraft decisionDraft) {
+        RiskDecision decision = new RiskDecision();
+        decision.setDecisionId(riskIdGenerator.nextId());
+        decision.setEventId(eventId);
+        decision.setDecisionAction(decisionDraft.action.name());
+        decision.setRiskLevel(decisionDraft.riskLevel.getCode());
+        decision.setRiskScore(BigDecimal.valueOf(decisionDraft.riskScore));
+        decision.setMatchedRuleCodes(JSON.toJSONString(decisionDraft.matchedRuleCodes));
+        decision.setDecisionReason(decisionDraft.reason);
+        return decision;
+    }
+
+    private RiskCase buildRiskCase(RiskEvent event, RiskDecision decision) {
+        RiskCase riskCase = new RiskCase();
+        riskCase.setCaseId(riskIdGenerator.nextId());
+        riskCase.setEventId(event.getEventId());
+        riskCase.setDecisionId(decision.getDecisionId());
+        riskCase.setSchoolCode(event.getSchoolCode());
+        riskCase.setCampusCode(event.getCampusCode());
+        riskCase.setCaseStatus("OPEN");
+        return riskCase;
     }
 
     private String buildDeviceFingerprint(RiskContext context, Map<String, Object> features) {
@@ -225,19 +247,23 @@ public class RiskControlServiceImpl implements RiskControlService {
         return Integer.toHexString(hash);
     }
 
-    private DecisionDraft resolveDecision(RiskContext context) {
+    private DecisionDraft resolveDecision(RiskContext context, RiskMode mode) {
         DecisionDraft behaviorControlDecision = matchBehaviorControl(context);
         if (behaviorControlDecision != null) {
             return behaviorControlDecision;
         }
 
-        if (inWhitelist(context.getSubjectType(), context.getSubjectId())) {
+        if (riskPolicyCacheService.isWhitelisted(context.getSubjectType(), context.getSubjectId())) {
             return DecisionDraft.allow("命中风控白名单");
         }
 
-        RiskBlacklist blacklist = findActiveBlacklist(context.getSubjectType(), context.getSubjectId());
+        RiskBlacklist blacklist = riskPolicyCacheService.getActiveBlacklist(context.getSubjectType(), context.getSubjectId());
         if (blacklist != null) {
             return DecisionDraft.reject("命中风控黑名单: " + safeReason(blacklist.getReason()));
+        }
+
+        if (mode == RiskMode.BASIC) {
+            return DecisionDraft.allow("风控基础模式：仅行为管控与黑白名单生效");
         }
 
         DecisionDraft advancedDecision = matchAdvancedSignals(context);
@@ -245,12 +271,7 @@ public class RiskControlServiceImpl implements RiskControlService {
             return advancedDecision;
         }
 
-        List<RiskRule> rules = riskRuleMapper.selectList(new LambdaQueryWrapper<RiskRule>()
-                .eq(RiskRule::getEventType, context.getEventType())
-                .eq(RiskRule::getStatus, STATUS_ENABLED)
-                .orderByAsc(RiskRule::getPriority)
-                .orderByAsc(RiskRule::getRuleId));
-
+        List<RiskRule> rules = riskPolicyCacheService.getEnabledRules(context.getEventType());
         for (RiskRule rule : rules) {
             if (!ruleMatched(rule, context)) {
                 continue;
@@ -307,12 +328,7 @@ public class RiskControlServiceImpl implements RiskControlService {
             return null;
         }
 
-        LocalDateTime since = LocalDateTime.now().minusMinutes(30);
-        Long failedCount = auditLoginTraceMapper.selectCount(new LambdaQueryWrapper<AuditLoginTrace>()
-                .eq(AuditLoginTrace::getIp, context.getRequestIp())
-                .ge(AuditLoginTrace::getCreateTime, since)
-                .in(AuditLoginTrace::getLoginResult, List.of("FAIL", "CHALLENGE")));
-        long total = failedCount == null ? 0L : failedCount;
+        long total = riskRealtimeStore.countLoginFailures(context.getRequestIp(), 30);
         if (total >= 10) {
             return new DecisionDraft(RiskAction.CHALLENGE, RiskLevel.HIGH, 90D,
                     "登录IP近期失败次数过高，触发安全校验", Collections.emptyList());
@@ -334,25 +350,7 @@ public class RiskControlServiceImpl implements RiskControlService {
             return null;
         }
 
-        LocalDateTime since = LocalDateTime.now().minusHours(24);
-        String marker = buildFeatureContainsMarker("deviceFingerprint", fingerprint);
-        List<RiskEvent> recentEvents = riskEventMapper.selectList(new LambdaQueryWrapper<RiskEvent>()
-                .ge(RiskEvent::getEventTime, since)
-                .like(RiskEvent::getRiskFeatures, marker)
-                .orderByDesc(RiskEvent::getEventTime)
-                .last("LIMIT 300"));
-        if (recentEvents == null || recentEvents.isEmpty()) {
-            return null;
-        }
-
-        Set<String> subjects = new HashSet<>();
-        for (RiskEvent event : recentEvents) {
-            if (event.getSubjectId() != null && !event.getSubjectId().isBlank()) {
-                subjects.add(event.getSubjectId());
-            }
-        }
-
-        int linkedUsers = subjects.size();
+        int linkedUsers = riskRealtimeStore.countDeviceSubjects(fingerprint);
         if (linkedUsers >= 5) {
             return new DecisionDraft(RiskAction.CHALLENGE, RiskLevel.HIGH, 88D,
                     "设备指纹关联账号过多，触发强校验", Collections.emptyList());
@@ -373,46 +371,12 @@ public class RiskControlServiceImpl implements RiskControlService {
             return null;
         }
 
-        LocalDateTime since = LocalDateTime.now().minusMinutes(5);
-        String marker = buildFeatureContainsMarker("requestIp", context.getRequestIp());
-        Long burstCount = riskEventMapper.selectCount(new LambdaQueryWrapper<RiskEvent>()
-                .eq(RiskEvent::getEventType, context.getEventType())
-                .ge(RiskEvent::getEventTime, since)
-                .like(RiskEvent::getRiskFeatures, marker));
-        long total = burstCount == null ? 0L : burstCount;
+        long total = riskRealtimeStore.countEvents(context.getEventType(), "IP", context.getRequestIp(), 5);
         if (total >= 45) {
             return new DecisionDraft(RiskAction.LIMIT, RiskLevel.MEDIUM, 62D,
                     "IP行为频率异常，已触发限流", Collections.emptyList());
         }
         return null;
-    }
-
-    private String buildFeatureContainsMarker(String key, String value) {
-        return "\"" + key + "\":\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
-    }
-
-    private boolean inWhitelist(String subjectType, String subjectId) {
-        LocalDateTime now = LocalDateTime.now();
-        Long count = riskWhitelistMapper.selectCount(new LambdaQueryWrapper<RiskWhitelist>()
-                .eq(RiskWhitelist::getSubjectType, subjectType)
-                .eq(RiskWhitelist::getSubjectId, subjectId)
-                .eq(RiskWhitelist::getStatus, STATUS_ENABLED)
-                .and(w -> w.isNull(RiskWhitelist::getExpireTime)
-                        .or()
-                        .gt(RiskWhitelist::getExpireTime, now)));
-        return count != null && count > 0;
-    }
-
-    private RiskBlacklist findActiveBlacklist(String subjectType, String subjectId) {
-        LocalDateTime now = LocalDateTime.now();
-        return riskBlacklistMapper.selectOne(new LambdaQueryWrapper<RiskBlacklist>()
-                .eq(RiskBlacklist::getSubjectType, subjectType)
-                .eq(RiskBlacklist::getSubjectId, subjectId)
-                .eq(RiskBlacklist::getStatus, STATUS_ENABLED)
-                .and(w -> w.isNull(RiskBlacklist::getExpireTime)
-                        .or()
-                        .gt(RiskBlacklist::getExpireTime, now))
-                .last("LIMIT 1"));
     }
 
     private boolean ruleMatched(RiskRule rule, RiskContext context) {
@@ -438,25 +402,30 @@ public class RiskControlServiceImpl implements RiskControlService {
             subjectType = subjectType.trim().toUpperCase();
         }
 
-        String subjectId = context.getSubjectId();
-        if (!Objects.equals(subjectType, context.getSubjectType())) {
-            if ("IP".equalsIgnoreCase(subjectType) && context.getRequestIp() != null) {
-                subjectId = context.getRequestIp();
-            }
-        }
-
+        String subjectId = resolveThresholdSubjectId(subjectType, context);
         if (subjectId == null || subjectId.isBlank()) {
             return false;
         }
 
-        LocalDateTime since = LocalDateTime.now().minusMinutes(Math.max(windowMinutes, 1));
-        Long count = riskEventMapper.selectCount(new LambdaQueryWrapper<RiskEvent>()
-                .eq(RiskEvent::getEventType, context.getEventType())
-                .eq(RiskEvent::getSubjectType, subjectType)
-                .eq(RiskEvent::getSubjectId, subjectId)
-                .ge(RiskEvent::getEventTime, since));
-        long total = count == null ? 0 : count;
+        long total = riskRealtimeStore.countEvents(context.getEventType(), subjectType, subjectId, windowMinutes);
         return total >= Math.max(maxCount, 1);
+    }
+
+    private String resolveThresholdSubjectId(String subjectType, RiskContext context) {
+        if (Objects.equals(subjectType, context.getSubjectType())) {
+            return context.getSubjectId();
+        }
+        if ("IP".equalsIgnoreCase(subjectType)) {
+            return context.getRequestIp();
+        }
+        if ("DEVICE".equalsIgnoreCase(subjectType)) {
+            Object fingerprint = context.getFeatures().get("deviceFingerprint");
+            if (fingerprint != null && !String.valueOf(fingerprint).isBlank()) {
+                return String.valueOf(fingerprint);
+            }
+            return context.getDeviceId();
+        }
+        return context.getSubjectId();
     }
 
     private boolean keywordMatched(JSONObject cfg, RiskContext context) {

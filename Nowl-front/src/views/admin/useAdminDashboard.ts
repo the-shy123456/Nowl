@@ -35,6 +35,14 @@ import {
   getAdminOrderList,
   getAdminErrandList,
   auditErrand,
+  getRiskMode,
+  updateRiskMode,
+  getBlacklist,
+  upsertBlacklist,
+  updateBlacklistStatus,
+  getWhitelist,
+  upsertWhitelist,
+  updateWhitelistStatus,
   getRiskEvents,
   getRiskCases,
   handleRiskCase,
@@ -67,6 +75,8 @@ import {
   type AdminDisputeItem,
   type AdminErrandItem,
   type PendingAuthUserItem,
+  type RiskModeItem,
+  type RiskSubjectListItem,
   type RiskEventItem,
   type RiskCaseItem,
   type RiskRuleItem,
@@ -340,18 +350,23 @@ export const useAdminDashboard = () => {
     return parts.join('，')
   })
   
-  const riskTab = ref<'events' | 'cases' | 'rules' | 'behavior'>('events')
+  const riskTab = ref<'mode' | 'events' | 'cases' | 'rules' | 'behavior' | 'blacklist' | 'whitelist'>('events')
   const auditTab = ref<'operations' | 'permission' | 'login'>('operations')
-  const riskTabOptions = ['events', 'cases', 'rules', 'behavior'] as const
+  const riskTabOptions = ['mode', 'events', 'cases', 'rules', 'behavior', 'blacklist', 'whitelist'] as const
   const auditTabOptions = ['operations', 'permission', 'login'] as const
+  const riskMode = ref('FULL')
   const riskEventTypeFilter = ref('')
   const riskDecisionActionFilter = ref('')
   const riskLevelFilter = ref('')
   const riskCaseStatusFilter = ref('')
   const riskStartTimeFilter = ref('')
   const riskEndTimeFilter = ref('')
+  const riskSubjectTypeFilter = ref('')
+  const riskSubjectIdFilter = ref('')
   const behaviorUserIdInput = ref('')
   const behaviorTargetUserId = ref<number | null>(null)
+  const blacklistItems = ref<RiskSubjectListItem[]>([])
+  const whitelistItems = ref<RiskSubjectListItem[]>([])
   const iamUserIdInput = ref('')
   const iamTargetUserId = ref<number | null>(null)
   const auditUserIdInput = ref('')
@@ -400,7 +415,7 @@ export const useAdminDashboard = () => {
     'order-manage': ['admin:order:list:view'],
     'errand-manage': ['admin:errand:list:view'],
     'dispute-manage': ['admin:dispute:list:view'],
-    'risk-center': ['risk:event:view', 'risk:case:handle', 'risk:rule:manage', 'admin:risk:behavior:view'],
+    'risk-center': ['risk:mode:view', 'risk:list:view', 'risk:event:view', 'risk:case:handle', 'risk:rule:manage', 'admin:risk:behavior:view'],
     'iam-center': ['admin:iam:role:view', 'admin:iam:user-role:view', 'admin:iam:scope:view'],
     'audit-center': ['admin:audit:operation:view', 'admin:audit:permission:view', 'admin:audit:login:view'],
     'search-manage': ['admin:search:manage'],
@@ -738,11 +753,10 @@ export const useAdminDashboard = () => {
   watch(iamTargetUserId, (value) => {
     iamUserIdInput.value = value ? String(value) : ''
   }, { immediate: true })
-  
-  watch(auditTargetUserId, (value) => {
-    auditUserIdInput.value = value ? String(value) : ''
-  }, { immediate: true })
-  
+  const canViewRiskMode = computed(() => hasPermission(userStore.userInfo, 'risk:mode:view'))
+  const canManageRiskMode = computed(() => hasPermission(userStore.userInfo, 'risk:mode:manage'))
+  const canViewRiskList = computed(() => hasPermission(userStore.userInfo, 'risk:list:view'))
+  const canManageRiskList = computed(() => hasPermission(userStore.userInfo, 'risk:list:manage'))
   const canViewRiskEvents = computed(() => hasPermission(userStore.userInfo, 'risk:event:view'))
   const canHandleRiskCase = computed(() => hasPermission(userStore.userInfo, 'risk:case:handle'))
   const canManageRiskRule = computed(() => hasPermission(userStore.userInfo, 'risk:rule:manage'))
@@ -760,11 +774,13 @@ export const useAdminDashboard = () => {
   const canViewLoginAudit = computed(() => hasPermission(userStore.userInfo, 'admin:audit:login:view'))
   const canAuditErrand = computed(() => hasPermission(userStore.userInfo, 'admin:errand:audit'))
   
-  const hasRiskTabAccess = (tab: 'events' | 'cases' | 'rules' | 'behavior') => {
+  const hasRiskTabAccess = (tab: 'mode' | 'events' | 'cases' | 'rules' | 'behavior' | 'blacklist' | 'whitelist') => {
+    if (tab === 'mode') return canViewRiskMode.value
     if (tab === 'events') return canViewRiskEvents.value
     if (tab === 'cases') return canHandleRiskCase.value
     if (tab === 'rules') return canManageRiskRule.value
-    return canViewBehaviorControl.value
+    if (tab === 'behavior') return canViewBehaviorControl.value
+    return canViewRiskList.value
   }
   
   const hasAuditTabAccess = (tab: 'operations' | 'permission' | 'login') => {
@@ -810,7 +826,7 @@ export const useAdminDashboard = () => {
   }
   
   const ensureRiskTab = () => {
-    const orderedTabs: Array<'events' | 'cases' | 'rules' | 'behavior'> = ['events', 'cases', 'rules', 'behavior']
+    const orderedTabs: Array<'mode' | 'events' | 'cases' | 'rules' | 'behavior' | 'blacklist' | 'whitelist'> = ['mode', 'events', 'cases', 'rules', 'behavior', 'blacklist', 'whitelist']
     const firstAllowed = orderedTabs.find((tab) => hasRiskTabAccess(tab))
     if (!firstAllowed) {
       return
@@ -1128,7 +1144,7 @@ export const useAdminDashboard = () => {
     loadData()
   }
   
-  const switchRiskTab = (tab: 'events' | 'cases' | 'rules' | 'behavior') => {
+  const switchRiskTab = (tab: 'mode' | 'events' | 'cases' | 'rules' | 'behavior' | 'blacklist' | 'whitelist') => {
     if (!hasRiskTabAccess(tab)) {
       ElMessage.warning('当前账号无此模块权限')
       return
@@ -1150,6 +1166,132 @@ export const useAdminDashboard = () => {
     loadData()
   }
   
+  const handleUpdateRiskMode = async () => {
+    if (!ensurePermission('risk:mode:manage')) {
+      return
+    }
+    try {
+      const { value: mode } = await ElMessageBox.prompt(
+        '输入风控模式（OFF / BASIC / FULL）',
+        '更新风控模式',
+        {
+          confirmButtonText: '提交',
+          cancelButtonText: '取消',
+          inputValue: riskMode.value,
+          inputPlaceholder: '请输入 OFF / BASIC / FULL',
+          inputValidator: (val) => !!val || '风控模式不能为空',
+        },
+      )
+      await updateRiskMode({ mode })
+      ElMessage.success('风控模式已更新')
+      loadData()
+    } catch (action) {
+      if (action !== 'cancel') {
+        ElMessage.error('更新风控模式失败')
+      }
+    }
+  }
+
+  const handleAddBlacklist = async () => {
+    if (!ensurePermission('risk:list:manage')) {
+      return
+    }
+    try {
+      const { value: subjectType } = await ElMessageBox.prompt('输入主体类型（USER / IP / DEVICE / CONTENT）', '新增黑名单', {
+        confirmButtonText: '下一步',
+        cancelButtonText: '取消',
+        inputPlaceholder: '请输入主体类型',
+        inputValidator: (val) => !!val || '主体类型不能为空',
+      })
+      const { value: subjectId } = await ElMessageBox.prompt('输入主体标识', '新增黑名单', {
+        confirmButtonText: '下一步',
+        cancelButtonText: '取消',
+        inputPlaceholder: '请输入用户ID / IP / 设备标识',
+        inputValidator: (val) => !!val || '主体标识不能为空',
+      })
+      const { value: reason } = await ElMessageBox.prompt('可选：输入加入原因', '新增黑名单', {
+        confirmButtonText: '提交',
+        cancelButtonText: '跳过',
+        inputPlaceholder: '例如：恶意刷消息',
+      })
+      await upsertBlacklist({
+        subjectType,
+        subjectId,
+        reason: reason || undefined,
+      })
+      ElMessage.success('黑名单已保存')
+      loadData()
+    } catch (action) {
+      if (action !== 'cancel') {
+        ElMessage.error('保存黑名单失败')
+      }
+    }
+  }
+
+  const handleToggleBlacklist = async (item: RiskSubjectListItem) => {
+    if (!ensurePermission('risk:list:manage')) {
+      return
+    }
+    try {
+      const nextStatus = item.status === 1 ? 0 : 1
+      await updateBlacklistStatus(item.id, nextStatus)
+      ElMessage.success(nextStatus === 1 ? '黑名单已启用' : '黑名单已禁用')
+      loadData()
+    } catch {
+      ElMessage.error('切换黑名单状态失败')
+    }
+  }
+
+  const handleAddWhitelist = async () => {
+    if (!ensurePermission('risk:list:manage')) {
+      return
+    }
+    try {
+      const { value: subjectType } = await ElMessageBox.prompt('输入主体类型（USER / IP / DEVICE / CONTENT）', '新增白名单', {
+        confirmButtonText: '下一步',
+        cancelButtonText: '取消',
+        inputPlaceholder: '请输入主体类型',
+        inputValidator: (val) => !!val || '主体类型不能为空',
+      })
+      const { value: subjectId } = await ElMessageBox.prompt('输入主体标识', '新增白名单', {
+        confirmButtonText: '下一步',
+        cancelButtonText: '取消',
+        inputPlaceholder: '请输入用户ID / IP / 设备标识',
+        inputValidator: (val) => !!val || '主体标识不能为空',
+      })
+      const { value: reason } = await ElMessageBox.prompt('可选：输入加入原因', '新增白名单', {
+        confirmButtonText: '提交',
+        cancelButtonText: '跳过',
+        inputPlaceholder: '例如：测试账号放行',
+      })
+      await upsertWhitelist({
+        subjectType,
+        subjectId,
+        reason: reason || undefined,
+      })
+      ElMessage.success('白名单已保存')
+      loadData()
+    } catch (action) {
+      if (action !== 'cancel') {
+        ElMessage.error('保存白名单失败')
+      }
+    }
+  }
+
+  const handleToggleWhitelist = async (item: RiskSubjectListItem) => {
+    if (!ensurePermission('risk:list:manage')) {
+      return
+    }
+    try {
+      const nextStatus = item.status === 1 ? 0 : 1
+      await updateWhitelistStatus(item.id, nextStatus)
+      ElMessage.success(nextStatus === 1 ? '白名单已启用' : '白名单已禁用')
+      loadData()
+    } catch {
+      ElMessage.error('切换白名单状态失败')
+    }
+  }
+
   const handleBehaviorUserQuery = () => {
     if (!ensurePermission('admin:risk:behavior:view')) {
       return
@@ -2160,10 +2302,13 @@ export const useAdminDashboard = () => {
     allOrders,
     disputes,
     allErrands,
+    riskMode,
     riskEvents,
     riskCases,
     riskRules,
     behaviorControls,
+    blacklistItems,
+    whitelistItems,
     iamRoles,
     userRoleBindings,
     adminScopeBindings,
@@ -2197,6 +2342,8 @@ export const useAdminDashboard = () => {
     riskTab,
     auditTab,
     riskTabOptions,
+    riskSubjectTypeFilter,
+    riskSubjectIdFilter,
     riskEventTypeFilter,
     riskDecisionActionFilter,
     riskLevelFilter,
@@ -2218,6 +2365,10 @@ export const useAdminDashboard = () => {
     canSelectCampus,
     isCampusAdmin,
     effectiveSchoolCode,
+    canViewRiskMode,
+    canManageRiskMode,
+    canViewRiskList,
+    canManageRiskList,
     canViewRiskEvents,
     canHandleRiskCase,
     canManageRiskRule,
@@ -2249,6 +2400,11 @@ export const useAdminDashboard = () => {
     handleSearch,
     handleRefresh,
     handleRiskSearch,
+    handleUpdateRiskMode,
+    handleAddBlacklist,
+    handleToggleBlacklist,
+    handleAddWhitelist,
+    handleToggleWhitelist,
     handleBehaviorUserQuery,
     handleAddBehaviorControl,
     handleDisableBehavior,
@@ -2289,4 +2445,15 @@ export const useAdminDashboard = () => {
     handleCreateErrandIndex,
   }
 }
+
+
+
+
+
+
+
+
+
+
+
 
