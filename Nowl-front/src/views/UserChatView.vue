@@ -149,6 +149,18 @@ const connectWebSocket = () => {
     markCurrentChatAsRead().catch((error) => {
       console.warn('标记消息已读失败', error)
     })
+  }, {
+    validateSession: async () => {
+      try {
+        await userStore.fetchUserInfo()
+        return true
+      } catch (error) {
+        console.warn('聊天WS检测到未授权，已停止重连并清理登录态', error)
+        await userStore.logout({ notifyServer: false })
+        wsAvailable.value = false
+        return false
+      }
+    },
   })
   ws.connect()
   wsAvailable.value = true
@@ -362,3 +374,4 @@ onUnmounted(() => {
     </div>
   </SubPageShell>
 </template>
+

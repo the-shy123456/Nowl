@@ -82,6 +82,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return false;
         }
 
+        // WebSocket握手：匿名可继续握手，由端点自行兜底关闭；已登录用户仍走JWT解析注入用户上下文
+        if (pathMatcher.match("/ws/**", path)) {
+            return !hasToken(request);
+        }
+
         // 检查是否是公开接口
         for (String publicPath : PUBLIC_PATHS) {
             if (pathMatcher.match(publicPath, path)) {
@@ -205,3 +210,5 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         return prefix + "..." + suffix;
     }
 }
+
+

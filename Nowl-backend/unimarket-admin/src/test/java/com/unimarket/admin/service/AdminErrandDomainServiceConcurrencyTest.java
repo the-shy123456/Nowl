@@ -10,6 +10,7 @@ import com.unimarket.module.errand.entity.ErrandTask;
 import com.unimarket.module.errand.mapper.ErrandTaskMapper;
 import com.unimarket.module.iam.service.IamAccessService;
 import com.unimarket.module.notice.service.NoticeService;
+import com.unimarket.module.user.entity.UserInfo;
 import com.unimarket.module.user.mapper.UserInfoMapper;
 import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +21,9 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.math.BigDecimal;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -91,5 +95,34 @@ class AdminErrandDomainServiceConcurrencyTest {
         assertThrows(BusinessException.class, () -> errandDomainService.auditErrand(1L, 100L, 1, "改判"));
         verify(errandTaskMapper, never()).updateById(any(ErrandTask.class));
     }
+
+    @Test
+    @DisplayName("auditErrand: 驳回时退还悬赏金额")
+    void auditErrand_rejectRefundsReward() {
+        ErrandTask task = new ErrandTask();
+        task.setTaskId(100L);
+        task.setPublisherId(200L);
+        task.setSchoolCode("SC001");
+        task.setCampusCode("CP001");
+        task.setTitle("帮取外卖");
+        task.setReward(new BigDecimal("18.00"));
+        task.setReviewStatus(ReviewStatus.WAIT_MANUAL.getCode());
+
+        UserInfo publisher = new UserInfo();
+        publisher.setUserId(200L);
+        publisher.setMoney(new BigDecimal("20.00"));
+
+        when(errandTaskMapper.selectById(100L)).thenReturn(task);
+        when(userInfoMapper.selectById(200L)).thenReturn(publisher);
+        when(userInfoMapper.updateById(publisher)).thenReturn(1);
+
+        errandDomainService.auditErrand(1L, 100L, 2, "违规内容");
+
+        assertEquals(new BigDecimal("38.00"), publisher.getMoney());
+        verify(errandTaskMapper).updateById(task);
+        verify(noticeService).sendNotice(200L, "跑腿任务审核未通过", "您的跑腿任务【帮取外卖】未通过人工复核，悬赏金额已退回余额。原因：违规内容", 1, 100L);
+        verify(rocketMQTemplate).convertAndSend("errand-sync-topic", com.unimarket.common.mq.ErrandSyncMessage.deleteMessage(100L));
+    }
 }
+
 

@@ -5,6 +5,7 @@ import com.unimarket.common.constant.CacheConstants;
 import com.unimarket.common.exception.BusinessException;
 import com.unimarket.module.chat.dto.ChatMessageDTO;
 import com.unimarket.module.chat.service.ChatService;
+import com.unimarket.security.CustomUserDetails;
 import com.unimarket.security.util.JwtUtils;
 import jakarta.websocket.*;
 import jakarta.websocket.server.ServerEndpoint;
@@ -17,6 +18,7 @@ import java.io.IOException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.security.Principal;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -58,8 +60,11 @@ public class ChatWebSocketServer {
     @OnOpen
     public void onOpen(Session session, EndpointConfig endpointConfig) {
         try {
-            String token = resolveAccessToken(endpointConfig);
-            Long userId = authenticateUserId(token);
+            Long userId = resolveAuthenticatedUserId(endpointConfig);
+            if (userId == null) {
+                String token = resolveAccessToken(endpointConfig);
+                userId = authenticateUserId(token);
+            }
             if (userId == null) {
                 closeUnauthorizedSession(session);
                 return;
@@ -267,6 +272,30 @@ public class ChatWebSocketServer {
         return userSessionMap.values().stream().mapToInt(Set::size).sum();
     }
 
+    private Long resolveAuthenticatedUserId(EndpointConfig endpointConfig) {
+        if (endpointConfig == null) {
+            return null;
+        }
+        Object principalObj = endpointConfig.getUserProperties().get("principal");
+        if (principalObj instanceof org.springframework.security.core.Authentication authentication) {
+            Object principal = authentication.getPrincipal();
+            if (principal instanceof CustomUserDetails userDetails) {
+                return userDetails.getUserId();
+            }
+        }
+        if (principalObj instanceof CustomUserDetails userDetails) {
+            return userDetails.getUserId();
+        }
+        if (principalObj instanceof Principal principal) {
+            Object userId = endpointConfig.getUserProperties().get("principalUserId");
+            if (userId instanceof Long id) {
+                return id;
+            }
+            log.debug("WebSocket握手Principal存在但未解析出userId: principal={}", principal.getName());
+        }
+        return null;
+    }
+
     private String resolveAccessToken(EndpointConfig endpointConfig) {
         if (endpointConfig == null) {
             return null;
@@ -324,6 +353,19 @@ public class ChatWebSocketServer {
                                     jakarta.websocket.HandshakeResponse response) {
             Map<String, List<String>> headers = request == null ? Collections.emptyMap() : request.getHeaders();
             sec.getUserProperties().put("headers", headers);
+            if (request != null) {
+                Principal principal = request.getUserPrincipal();
+                if (principal != null) {
+                    sec.getUserProperties().put("principal", principal);
+                    if (principal instanceof org.springframework.security.core.Authentication authentication) {
+                        Object principalBody = authentication.getPrincipal();
+                        if (principalBody instanceof CustomUserDetails userDetails) {
+                            sec.getUserProperties().put("principalUserId", userDetails.getUserId());
+                        }
+                    }
+                }
+            }
         }
     }
 }
+

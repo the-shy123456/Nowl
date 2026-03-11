@@ -38,6 +38,8 @@ let publishPopoverCloseTimer: ReturnType<typeof setTimeout> | null = null
 
 const showProfilePopover = ref(false)
 let profilePopoverCloseTimer: ReturnType<typeof setTimeout> | null = null
+let routeRefreshInFlight = false
+let lastRouteRefreshAt = 0
 
 const avatarLoadFailed = ref(false)
 const currentUserAvatar = computed(() => normalizeMediaUrl(userStore.userInfo?.imageUrl) || '')
@@ -166,6 +168,25 @@ const handleAvatarClick = () => {
   showProfilePopover.value = !showProfilePopover.value
 }
 
+const refreshUserContextOnRouteChange = async () => {
+  if (!userStore.isLoggedIn || routeRefreshInFlight) {
+    return
+  }
+  const now = Date.now()
+  if (now - lastRouteRefreshAt < 400) {
+    return
+  }
+  routeRefreshInFlight = true
+  lastRouteRefreshAt = now
+  try {
+    await userStore.fetchUserInfo()
+  } catch (error) {
+    console.warn('路由切换后刷新用户信息失败', error)
+  } finally {
+    routeRefreshInFlight = false
+  }
+}
+
 const handleCampusClick = async () => {
   if (!userStore.isLoggedIn) {
     router.push('/login')
@@ -230,6 +251,7 @@ watch(
     showCampusSelector.value = false
     showPublishPopover.value = false
     showProfilePopover.value = false
+    void refreshUserContextOnRouteChange()
   },
 )
 
@@ -925,3 +947,4 @@ onUnmounted(() => {
   transform: translateY(8px);
 }
 </style>
+

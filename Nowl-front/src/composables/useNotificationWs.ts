@@ -10,8 +10,11 @@ export function useNotificationWs() {
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   const connected = ref(false)
   let lastNoticeToastAt = 0
+  let authRecoveryInFlight = false
 
   const shouldToastNotice = (title: string) => /审核|复核|纠纷|退款/.test(title)
+  const isUnauthorizedClose = (event?: CloseEvent | null) =>
+    event?.code === 1008 || event?.reason === 'UNAUTHORIZED'
 
   const connect = () => {
     if (!userStore.isLoggedIn) return
@@ -48,8 +51,23 @@ export function useNotificationWs() {
         }
       }
 
-      ws.onclose = () => {
+      ws.onclose = async (event) => {
         connected.value = false
+        if (isUnauthorizedClose(event)) {
+          if (authRecoveryInFlight) {
+            return
+          }
+          authRecoveryInFlight = true
+          try {
+            await userStore.fetchUserInfo()
+          } catch (error) {
+            console.warn('通知WS检测到未授权，已停止重连并清理登录态', error)
+            await userStore.logout({ notifyServer: false })
+            return
+          } finally {
+            authRecoveryInFlight = false
+          }
+        }
         scheduleReconnect()
       }
 
@@ -105,3 +123,4 @@ export function useNotificationWs() {
 
   return { connected, connect, disconnect }
 }
+

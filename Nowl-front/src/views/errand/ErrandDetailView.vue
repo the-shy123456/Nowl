@@ -105,7 +105,7 @@ const actionHint = computed(() => {
     return `任务待人工复核${task.value.auditReason ? `：${task.value.auditReason}` : ''}`
   }
   if (reviewStatus === ReviewStatus.REJECTED) {
-    return `任务审核未通过${task.value.auditReason ? `：${task.value.auditReason}` : ''}`
+    return `任务审核未通过${task.value.auditReason ? `：${task.value.auditReason}` : ''}，悬赏金额已退回余额，无需再次取消`
   }
 
   if (task.value.taskStatus === ErrandStatus.PENDING) {
@@ -220,6 +220,8 @@ const canReview = computed(() =>
 )
 const canCancel = computed(() => {
   if (!task.value) return false
+  const reviewStatus = getReviewStatus(task.value)
+  if (reviewStatus === ReviewStatus.REJECTED) return false
   return (
     (task.value.taskStatus === ErrandStatus.PENDING && isPublisher.value) ||
     (task.value.taskStatus === ErrandStatus.IN_PROGRESS && (isPublisher.value || isAcceptor.value))
@@ -575,6 +577,12 @@ onUnmounted(() => {
       >
         <p class="text-xs font-semibold text-orange-700">审核说明</p>
         <p class="text-sm text-orange-700 mt-1 leading-6">{{ task.auditReason }}</p>
+        <p
+          v-if="getReviewStatus(task) === ReviewStatus.REJECTED"
+          class="text-xs text-orange-600 mt-2"
+        >
+          审核未通过的任务已自动退回悬赏金额，无需再次取消。
+        </p>
       </section>
 
       <section class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -871,3 +879,5 @@ onUnmounted(() => {
     </div>
   </SubPageShell>
 </template>
+
+

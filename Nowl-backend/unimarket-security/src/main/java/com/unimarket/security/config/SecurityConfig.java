@@ -106,7 +106,7 @@ public class SecurityConfig {
                         // 需要登录的公开前缀子路由（需在permitAll规则前声明）
                         .requestMatchers(HttpMethod.GET, "/goods/my", "/goods/collections", "/user/info").authenticated()
                         // 允许匿名访问的接口
-                        .requestMatchers("/auth/**", "/school/**", "/category/**").permitAll()
+                        .requestMatchers("/auth/**", "/school/**", "/category/**", "/ws/**").permitAll()
                         // 允许匿名访问的公开浏览接口（GET请求）
                         .requestMatchers(HttpMethod.GET, "/goods", "/goods/{id}").permitAll()  // 商品列表和详情
                         .requestMatchers(HttpMethod.GET, "/errand/list", "/errand/{taskId}").permitAll()  // 跑腿列表和详情
@@ -137,3 +137,4 @@ public class SecurityConfig {
         return http.build();
     }
 }
+

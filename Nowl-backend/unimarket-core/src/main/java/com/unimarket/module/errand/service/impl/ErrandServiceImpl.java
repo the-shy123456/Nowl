@@ -4,20 +4,20 @@ import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.unimarket.common.config.RocketMQConfig;
 import com.unimarket.common.enums.ErrandStatus;
 import com.unimarket.common.enums.NoticeType;
 import com.unimarket.common.enums.ReviewStatus;
 import com.unimarket.common.exception.BusinessException;
+import com.unimarket.common.mq.ErrandAuditMessage;
 import com.unimarket.common.mq.ErrandSyncMessage;
 import com.unimarket.common.result.PageQuery;
 import com.unimarket.common.result.ResultCode;
-import com.unimarket.module.errand.dto.ErrandAuditResult;
 import com.unimarket.module.errand.dto.ErrandPublishDTO;
 import com.unimarket.module.errand.dto.ErrandQueryDTO;
 import com.unimarket.module.errand.dto.LocationUploadDTO;
 import com.unimarket.module.errand.entity.ErrandTask;
 import com.unimarket.module.errand.mapper.ErrandTaskMapper;
-import com.unimarket.module.errand.service.ErrandAuditService;
 import com.unimarket.module.errand.service.ErrandDelayMessageService;
 import com.unimarket.module.errand.service.ErrandService;
 import com.unimarket.module.errand.vo.ErrandVO;
@@ -69,7 +69,6 @@ public class ErrandServiceImpl implements ErrandService {
     private final ErrandDelayMessageService errandDelayMessageService;
     private final RocketMQTemplate rocketMQTemplate;
     private final RiskControlService riskControlService;
-    private final ErrandAuditService errandAuditService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -112,11 +111,6 @@ public class ErrandServiceImpl implements ErrandService {
                 .rawPayload(rawPayload)
                 .build());
 
-        ErrandAuditResult auditResult = errandAuditService.audit(dto);
-        if (auditResult.isRejected()) {
-            throw new BusinessException("跑腿任务审核未通过：" + auditResult.getReason());
-        }
-
         ErrandTask task = BeanUtil.copyProperties(dto, ErrandTask.class);
 
         // 检查余额
@@ -136,8 +130,8 @@ public class ErrandServiceImpl implements ErrandService {
         task.setPickupLongitude(null);
         task.setDeliveryLatitude(null);
         task.setDeliveryLongitude(null);
-        task.setReviewStatus(auditResult.getReviewStatus());
-        task.setAuditReason(auditResult.getReason());
+        task.setReviewStatus(ReviewStatus.WAIT_REVIEW.getCode());
+        task.setAuditReason(null);
 
         if (dto.getDeadline() != null && !dto.getDeadline().isEmpty()) {
             try {
@@ -158,32 +152,8 @@ public class ErrandServiceImpl implements ErrandService {
         log.info("发布跑腿任务成功: taskId={}, userId={}, reward={}, reviewStatus={}",
                 task.getTaskId(), userId, task.getReward(), task.getReviewStatus());
 
-        if (isReviewPassed(task.getReviewStatus())) {
-            sendErrandSyncAfterCommit(task.getTaskId(), ErrandSyncMessage.createMessage(task.getTaskId()), "发布");
-            noticeService.sendNotice(
-                    task.getPublisherId(),
-                    "跑腿任务审核通过",
-                    "您的跑腿任务【" + task.getTitle() + "】已通过审核并发布成功。",
-                    NoticeType.TRADE.getCode(),
-                    task.getTaskId()
-            );
-        } else if (ReviewStatus.WAIT_MANUAL.getCode().equals(task.getReviewStatus())) {
-            noticeService.sendNotice(
-                    task.getPublisherId(),
-                    "跑腿任务待人工复核",
-                    "您的跑腿任务【" + task.getTitle() + "】需要人工复核，暂不可见。原因：" + task.getAuditReason(),
-                    NoticeType.TRADE.getCode(),
-                    task.getTaskId()
-            );
-        } else if (ReviewStatus.REJECTED.getCode().equals(task.getReviewStatus())) {
-            noticeService.sendNotice(
-                    task.getPublisherId(),
-                    "跑腿任务审核未通过",
-                    "您的跑腿任务【" + task.getTitle() + "】未通过审核。原因：" + task.getAuditReason(),
-                    NoticeType.TRADE.getCode(),
-                    task.getTaskId()
-            );
-        }
+        // 提交后异步审核，通过后再同步 ES 并通知
+        sendErrandAuditAfterCommit(task.getTaskId(), ErrandAuditMessage.create(task.getTaskId()), "发布");
     }
 
     @Override
@@ -244,11 +214,6 @@ public class ErrandServiceImpl implements ErrandService {
             throw new BusinessException("仅待接单状态可修改");
         }
 
-        ErrandAuditResult auditResult = errandAuditService.audit(dto);
-        if (auditResult.isRejected()) {
-            throw new BusinessException("跑腿任务审核未通过：" + auditResult.getReason());
-        }
-
         UserInfo publisher = userInfoMapper.selectById(userId);
         if (publisher == null) {
             throw new BusinessException(ResultCode.USER_NOT_FOUND);
@@ -259,17 +224,20 @@ public class ErrandServiceImpl implements ErrandService {
         }
 
         java.math.BigDecimal oldReward = task.getReward();
+        java.math.BigDecimal escrowedReward = ReviewStatus.REJECTED.getCode().equals(task.getReviewStatus())
+                ? java.math.BigDecimal.ZERO
+                : oldReward;
         java.math.BigDecimal newReward = dto.getReward();
-        int cmp = newReward.compareTo(oldReward);
+        int cmp = newReward.compareTo(escrowedReward);
         if (cmp > 0) {
-            java.math.BigDecimal diff = newReward.subtract(oldReward);
+            java.math.BigDecimal diff = newReward.subtract(escrowedReward);
             if (publisher.getMoney().compareTo(diff) < 0) {
                 throw new BusinessException("余额不足，无法提高悬赏金额");
             }
             publisher.setMoney(publisher.getMoney().subtract(diff));
             userInfoMapper.updateById(publisher);
         } else if (cmp < 0) {
-            java.math.BigDecimal diff = oldReward.subtract(newReward);
+            java.math.BigDecimal diff = escrowedReward.subtract(newReward);
             publisher.setMoney(publisher.getMoney().add(diff));
             userInfoMapper.updateById(publisher);
         }
@@ -286,8 +254,8 @@ public class ErrandServiceImpl implements ErrandService {
         task.setDeliveryLongitude(null);
         task.setReward(dto.getReward());
         task.setRemark(dto.getRemark());
-        task.setReviewStatus(auditResult.getReviewStatus());
-        task.setAuditReason(auditResult.getReason());
+        task.setReviewStatus(ReviewStatus.WAIT_REVIEW.getCode());
+        task.setAuditReason(null);
 
         if (dto.getDeadline() != null && !dto.getDeadline().isEmpty()) {
             try {
@@ -308,20 +276,9 @@ public class ErrandServiceImpl implements ErrandService {
         errandTaskMapper.updateById(task);
         log.info("跑腿任务修改成功: taskId={}, userId={}, reviewStatus={}", taskId, userId, task.getReviewStatus());
 
-        if (isReviewPassed(task.getReviewStatus())) {
-            sendErrandSyncAfterCommit(taskId, ErrandSyncMessage.updateMessage(taskId), "修改");
-        } else {
-            sendErrandSyncAfterCommit(taskId, ErrandSyncMessage.deleteMessage(taskId), "下线");
-            if (ReviewStatus.WAIT_MANUAL.getCode().equals(task.getReviewStatus())) {
-                noticeService.sendNotice(
-                        task.getPublisherId(),
-                        "跑腿任务待人工复核",
-                        "您修改的跑腿任务【" + task.getTitle() + "】需要人工复核，暂不可见。原因：" + task.getAuditReason(),
-                        NoticeType.TRADE.getCode(),
-                        task.getTaskId()
-                );
-            }
-        }
+        // 重新提审期间任务不可见：先从 ES 移除，审核通过后再恢复
+        sendErrandSyncAfterCommit(taskId, ErrandSyncMessage.deleteMessage(taskId), "重新提审");
+        sendErrandAuditAfterCommit(taskId, ErrandAuditMessage.update(taskId), "修改");
     }
 
     @Override
@@ -551,6 +508,9 @@ public class ErrandServiceImpl implements ErrandService {
             if (!canCancel) {
                 throw new BusinessException("当前任务状态不可取消");
             }
+            if (ReviewStatus.REJECTED.getCode().equals(task.getReviewStatus())) {
+                throw new BusinessException("任务审核未通过且悬赏已退还，无需重复取消");
+            }
 
             // 退还佣金给发布者
             UserInfo publisher = userInfoMapper.selectById(task.getPublisherId());
@@ -652,6 +612,17 @@ public class ErrandServiceImpl implements ErrandService {
         });
     }
 
+    private void sendErrandAuditAfterCommit(Long taskId, ErrandAuditMessage message, String actionName) {
+        runAfterCommit(() -> {
+            try {
+                rocketMQTemplate.syncSend(RocketMQConfig.ERRAND_AUDIT_TOPIC, message);
+                log.info("发送跑腿任务{}审核消息成功: taskId={}, operationType={}", actionName, taskId, message.getOperationType());
+            } catch (Exception e) {
+                log.error("发送跑腿任务{}审核消息失败: taskId={}, operationType={}", actionName, taskId, message.getOperationType(), e);
+            }
+        });
+    }
+
     // 统一在事务提交后触发异步副作用，避免主事务回滚时消息已提前发出。
     private void runAfterCommit(Runnable task) {
         Runnable safeTask = () -> {
@@ -735,4 +706,7 @@ public class ErrandServiceImpl implements ErrandService {
         }).collect(Collectors.toList());
     }
 }
+
+
+
 

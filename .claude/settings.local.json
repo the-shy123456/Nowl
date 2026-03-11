@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find E:/Nowl -type f \\\\\\( -name '*.vue' -o -name '*.tsx' -o -name '*.ts' -o -name '*.js' \\\\\\) | xargs grep -l -i 'risk\\\\|风险\\\\|riskMode\\\\|riskLevel' 2>/dev/null | head -30)"
+    ]
+  }
+}

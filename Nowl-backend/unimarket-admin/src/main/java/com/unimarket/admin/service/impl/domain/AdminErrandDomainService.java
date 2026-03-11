@@ -28,6 +28,7 @@ import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -104,12 +105,13 @@ public class AdminErrandDomainService {
             String rejectReason = StrUtil.isBlank(reason) ? "任务内容未通过平台审核规范" : reason;
             task.setReviewStatus(ReviewStatus.REJECTED.getCode());
             task.setAuditReason(rejectReason);
+            refundReward(task);
             errandTaskMapper.updateById(task);
 
             noticeService.sendNotice(
                     task.getPublisherId(),
                     "跑腿任务审核未通过",
-                    "您的跑腿任务【" + task.getTitle() + "】未通过人工复核。原因：" + rejectReason,
+                    "您的跑腿任务【" + task.getTitle() + "】未通过人工复核，悬赏金额已退回余额。原因：" + rejectReason,
                     NoticeType.TRADE.getCode(),
                     taskId
             );
@@ -118,6 +120,24 @@ public class AdminErrandDomainService {
         }
 
         log.info("跑腿任务人工复核完成: taskId={}, status={}, reason={}", taskId, status, reason);
+    }
+
+    private void refundReward(ErrandTask task) {
+        BigDecimal reward = task.getReward();
+        if (reward == null || reward.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        UserInfo publisher = userInfoMapper.selectById(task.getPublisherId());
+        if (publisher == null) {
+            throw new BusinessException("任务发布者不存在，无法退还悬赏金额");
+        }
+        publisher.setMoney(publisher.getMoney().add(reward));
+        int updated = userInfoMapper.updateById(publisher);
+        if (updated <= 0) {
+            throw new BusinessException("退还悬赏金额失败");
+        }
+        log.info("人工复核驳回后已退还悬赏金额: taskId={}, publisherId={}, reward={}",
+                task.getTaskId(), task.getPublisherId(), reward);
     }
 
     public Page<ErrandVO> getAdminErrandList(Long operatorId,
@@ -193,3 +213,4 @@ public class AdminErrandDomainService {
         return new Page<ErrandVO>(taskPage.getCurrent(), taskPage.getSize(), taskPage.getTotal()).setRecords(vos);
     }
 }
+

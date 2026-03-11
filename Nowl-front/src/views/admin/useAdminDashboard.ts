@@ -1040,6 +1040,12 @@ export const useAdminDashboard = () => {
             riskRules.value = res?.records || []
             pagination.value.total = res?.total || 0
           }
+        } else if (riskTab.value === 'mode') {
+          if (canViewRiskMode.value) {
+            const res = await getRiskMode()
+            riskMode.value = res?.mode ?? riskMode.value
+          }
+          pagination.value.total = 0
         } else {
           if (!canViewBehaviorControl.value) {
             behaviorControls.value = []

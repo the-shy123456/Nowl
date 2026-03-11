@@ -70,7 +70,7 @@ public class AiAuditServiceImpl implements AiAuditService {
             }
         } catch (Exception e) {
             log.error("AI文本审核异常，已提交人工审核", e);
-            return new AiAuditResult(true, "AI审核服务暂时不可用，已提交人工审核", "medium"); 
+            return new AiAuditResult(true, resolveAuditFallbackReason(e, "AI审核服务暂时不可用，已提交人工审核"), "medium");
         }
     }
 
@@ -144,8 +144,23 @@ public class AiAuditServiceImpl implements AiAuditService {
             return new AiAuditResult(true, "图片地址异常，建议人工复核", "medium");
         } catch (Exception e) {
             log.error("AI图片审核调用失败", e);
-            return new AiAuditResult(true, "图片审核服务异常，建议人工复核", "medium");
+            return new AiAuditResult(true, resolveAuditFallbackReason(e, "图片审核服务异常，建议人工复核"), "medium");
         }
+    }
+
+    private String resolveAuditFallbackReason(Exception e, String defaultReason) {
+        if (e == null) {
+            return defaultReason;
+        }
+        String message = e.getMessage();
+        if (message == null || message.isBlank()) {
+            return defaultReason;
+        }
+        String normalized = message.toLowerCase();
+        if (normalized.contains("429") || normalized.contains("overloaded") || normalized.contains("rate limit")) {
+            return "AI审核服务繁忙，已转人工复核";
+        }
+        return defaultReason;
     }
 
     private String normalizeRiskLevel(String riskLevel, String defaultLevel) {
@@ -172,3 +187,4 @@ public class AiAuditServiceImpl implements AiAuditService {
         }
     }
 }
+

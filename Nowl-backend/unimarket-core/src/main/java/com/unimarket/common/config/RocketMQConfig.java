@@ -55,6 +55,16 @@ public class RocketMQConfig {
     public static final long ERRAND_AUTO_CONFIRM_DELAY_MS = 24 * 60 * 60 * 1000L;
 
     /**
+     * 跑腿审核 Topic
+     */
+    public static final String ERRAND_AUDIT_TOPIC = "errand-audit-topic";
+
+    /**
+     * 跑腿审核消费者组
+     */
+    public static final String ERRAND_AUDIT_CONSUMER_GROUP = "errand-audit-consumer-group";
+
+    /**
      * 商品审核 Topic
      */
     public static final String GOODS_AUDIT_TOPIC = "goods-audit-topic";
@@ -83,4 +93,5 @@ public class RocketMQConfig {
      */
     public static final String RISK_AUDIT_CONSUMER_GROUP = "risk-audit-consumer-group";
 }
+
 

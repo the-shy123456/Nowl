@@ -19,6 +19,7 @@ interface WebSocketConfig {
   heartbeatInterval?: number // 心跳间隔，默认 30 秒
   reconnectInterval?: number // 初始重连间隔，默认 1 秒
   maxReconnectAttempts?: number // 最大重连次数，默认 5 次
+  validateSession?: () => Promise<boolean> // 未授权关闭时校验当前会话
 }
 
 export class ChatWebSocket {
@@ -37,6 +38,8 @@ export class ChatWebSocket {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private heartbeatInterval: number
   private pongReceived = true // 标记是否收到心跳响应
+  private validateSession?: () => Promise<boolean>
+  private authRecoveryInFlight = false
 
   // 消息队列（连接断开时缓存消息）
   private messageQueue: SendMessage[] = []
@@ -48,6 +51,7 @@ export class ChatWebSocket {
     this.heartbeatInterval = config.heartbeatInterval || 30000 // 30秒
     this.reconnectInterval = config.reconnectInterval || 1000 // 1秒
     this.maxReconnectAttempts = config.maxReconnectAttempts || 5 // 5次
+    this.validateSession = config.validateSession
 
     // 构造 WebSocket URL（统一走前端同源 /api 代理）
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -102,8 +106,15 @@ export class ChatWebSocket {
       }
     }
 
-    this.socket.onclose = () => {
+    this.socket.onclose = async (event) => {
       this.stopHeartbeat()
+
+      if (this.isUnauthorizedClose(event)) {
+        const shouldReconnect = await this.handleUnauthorizedClose()
+        if (!shouldReconnect) {
+          return
+        }
+      }
 
       // 如果不是手动关闭，则尝试重连
       if (!this.manualClose) {
@@ -173,6 +184,28 @@ export class ChatWebSocket {
     this.reconnectTimer = setTimeout(() => {
       this.connect()
     }, delay)
+  }
+
+  private isUnauthorizedClose(event?: CloseEvent | null) {
+    return event?.code === 1008 || event?.reason === 'UNAUTHORIZED'
+  }
+
+  private async handleUnauthorizedClose(): Promise<boolean> {
+    if (this.authRecoveryInFlight) {
+      return false
+    }
+    if (!this.validateSession) {
+      return false
+    }
+    this.authRecoveryInFlight = true
+    try {
+      return await this.validateSession()
+    } catch (error) {
+      console.warn('聊天WS未授权关闭，会话校验失败', error)
+      return false
+    } finally {
+      this.authRecoveryInFlight = false
+    }
   }
 
   /**
@@ -255,3 +288,4 @@ export class ChatWebSocket {
     return this.socket?.readyState === WebSocket.OPEN
   }
 }
+

@@ -6,11 +6,11 @@ spring:
     name: unimarket-gateway
   data:
     redis:
-      host: ${REDIS_HOST:127.0.0.1}
+      host: ${REDIS_HOST:192.168.40.8}
       port: ${REDIS_PORT:6379}
       database: ${REDIS_DATABASE:0}
       timeout: ${REDIS_TIMEOUT:3000ms}
-      password: ${REDIS_PASSWORD:}
+      password: ${REDIS_PASSWORD:123456}
   cloud:
     gateway:
       httpclient:
@@ -37,6 +37,18 @@ spring:
               - Authorization
             allowCredentials: true
       routes:
+        - id: unimarket-backend-ws-api
+          uri: ${UM_BACKEND_WS_URI:ws://127.0.0.1:8080}
+          predicates:
+            - Header=Upgrade, websocket
+            - Path=/api/**
+          filters:
+            - RewritePath=/api/(?<segment>.*), /$\{segment}
+        - id: unimarket-backend-ws
+          uri: ${UM_BACKEND_WS_URI:ws://127.0.0.1:8080}
+          predicates:
+            - Header=Upgrade, websocket
+            - Path=/**
         - id: unimarket-backend-all
           uri: ${UM_BACKEND_URI:http://127.0.0.1:8080}
           predicates:
@@ -60,4 +72,7 @@ security:
 logging:
   level:
     com.unimarket.gateway: info
+
+
+
 

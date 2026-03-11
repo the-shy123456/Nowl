@@ -1,18 +1,15 @@
 package com.unimarket.module.errand.service;
 
-import com.unimarket.module.errand.dto.ErrandAuditResult;
-import com.unimarket.module.errand.dto.ErrandPublishDTO;
-
 /**
  * 跑腿任务审核服务
  */
 public interface ErrandAuditService {
 
     /**
-     * 审核跑腿发布内容（文本+图片）
+     * 异步审核跑腿任务（由 MQ 消费者触发）
      *
-     * @param dto 发布内容
-     * @return 审核结果
+     * @param taskId        任务ID
+     * @param operationType 操作类型（1-新增，2-更新）
      */
-    ErrandAuditResult audit(ErrandPublishDTO dto);
+    void performAudit(Long taskId, int operationType);
 }
