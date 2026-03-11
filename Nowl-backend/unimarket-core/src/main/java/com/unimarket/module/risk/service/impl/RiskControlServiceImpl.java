@@ -47,6 +47,9 @@ import java.util.UUID;
 public class RiskControlServiceImpl implements RiskControlService {
 
     private static final String SUBJECT_USER = "USER";
+    private static final String COUNTER_EVENT_COUNT = "EVENT_COUNT";
+    private static final String COUNTER_LOGIN_FAILURE = "LOGIN_FAILURE_COUNT";
+    private static final String COUNTER_DEVICE_SUBJECT = "DEVICE_SUBJECT_COUNT";
 
     private final RiskPolicyCacheService riskPolicyCacheService;
     private final RiskBehaviorControlService riskBehaviorControlService;
@@ -266,11 +269,6 @@ public class RiskControlServiceImpl implements RiskControlService {
             return DecisionDraft.allow("风控基础模式：仅行为管控与黑白名单生效");
         }
 
-        DecisionDraft advancedDecision = matchAdvancedSignals(context);
-        if (advancedDecision != null) {
-            return advancedDecision;
-        }
-
         List<RiskRule> rules = riskPolicyCacheService.getEnabledRules(context.getEventType());
         for (RiskRule rule : rules) {
             if (!ruleMatched(rule, context)) {
@@ -307,78 +305,6 @@ public class RiskControlServiceImpl implements RiskControlService {
         return new DecisionDraft(action, level, scoreByAction(action), reason, Collections.emptyList());
     }
 
-    private DecisionDraft matchAdvancedSignals(RiskContext context) {
-        DecisionDraft ipSignal = matchIpProfileSignal(context);
-        if (ipSignal != null) {
-            return ipSignal;
-        }
-
-        DecisionDraft deviceSignal = matchDeviceFingerprintSignal(context);
-        if (deviceSignal != null) {
-            return deviceSignal;
-        }
-
-        return matchIpBurstSignal(context);
-    }
-
-    private DecisionDraft matchIpProfileSignal(RiskContext context) {
-        if (!"LOGIN".equalsIgnoreCase(context.getEventType())
-                || context.getRequestIp() == null
-                || context.getRequestIp().isBlank()) {
-            return null;
-        }
-
-        long total = riskRealtimeStore.countLoginFailures(context.getRequestIp(), 30);
-        if (total >= 10) {
-            return new DecisionDraft(RiskAction.CHALLENGE, RiskLevel.HIGH, 90D,
-                    "登录IP近期失败次数过高，触发安全校验", Collections.emptyList());
-        }
-        if (total >= 6) {
-            return new DecisionDraft(RiskAction.REVIEW, RiskLevel.MEDIUM, 78D,
-                    "登录IP存在异常失败行为，进入人工复核", Collections.emptyList());
-        }
-        return null;
-    }
-
-    private DecisionDraft matchDeviceFingerprintSignal(RiskContext context) {
-        Object fingerprintObj = context.getFeatures().get("deviceFingerprint");
-        if (fingerprintObj == null) {
-            return null;
-        }
-        String fingerprint = String.valueOf(fingerprintObj);
-        if (fingerprint.isBlank()) {
-            return null;
-        }
-
-        int linkedUsers = riskRealtimeStore.countDeviceSubjects(fingerprint);
-        if (linkedUsers >= 5) {
-            return new DecisionDraft(RiskAction.CHALLENGE, RiskLevel.HIGH, 88D,
-                    "设备指纹关联账号过多，触发强校验", Collections.emptyList());
-        }
-        if (linkedUsers >= 3) {
-            return new DecisionDraft(RiskAction.REVIEW, RiskLevel.MEDIUM, 72D,
-                    "设备指纹关联账号异常，进入人工复核", Collections.emptyList());
-        }
-        return null;
-    }
-
-    private DecisionDraft matchIpBurstSignal(RiskContext context) {
-        if (context.getRequestIp() == null || context.getRequestIp().isBlank()) {
-            return null;
-        }
-        if (!List.of("CHAT_SEND", "AI_CHAT_SEND", "FOLLOW_USER", "GOODS_PUBLISH", "ERRAND_PUBLISH")
-                .contains(context.getEventType())) {
-            return null;
-        }
-
-        long total = riskRealtimeStore.countEvents(context.getEventType(), "IP", context.getRequestIp(), 5);
-        if (total >= 45) {
-            return new DecisionDraft(RiskAction.LIMIT, RiskLevel.MEDIUM, 62D,
-                    "IP行为频率异常，已触发限流", Collections.emptyList());
-        }
-        return null;
-    }
-
     private boolean ruleMatched(RiskRule rule, RiskContext context) {
         if (rule == null || rule.getRuleType() == null) {
             return false;
@@ -407,8 +333,27 @@ public class RiskControlServiceImpl implements RiskControlService {
             return false;
         }
 
-        long total = riskRealtimeStore.countEvents(context.getEventType(), subjectType, subjectId, windowMinutes);
+        long total = resolveThresholdCount(cfg.getString("counterType"), context, subjectType, subjectId, windowMinutes);
         return total >= Math.max(maxCount, 1);
+    }
+
+    private long resolveThresholdCount(String counterType,
+                                       RiskContext context,
+                                       String subjectType,
+                                       String subjectId,
+                                       int windowMinutes) {
+        String normalizedCounterType = counterType == null || counterType.isBlank()
+                ? COUNTER_EVENT_COUNT
+                : counterType.trim().toUpperCase();
+        return switch (normalizedCounterType) {
+            case COUNTER_EVENT_COUNT -> riskRealtimeStore.countEvents(context.getEventType(), subjectType, subjectId, windowMinutes);
+            case COUNTER_LOGIN_FAILURE -> riskRealtimeStore.countLoginFailures(subjectId, windowMinutes);
+            case COUNTER_DEVICE_SUBJECT -> riskRealtimeStore.countDeviceSubjects(subjectId, windowMinutes);
+            default -> {
+                log.warn("未知风控计数类型: {}", normalizedCounterType);
+                yield 0L;
+            }
+        };
     }
 
     private String resolveThresholdSubjectId(String subjectType, RiskContext context) {

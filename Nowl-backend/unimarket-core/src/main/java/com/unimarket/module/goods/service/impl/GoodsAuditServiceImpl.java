@@ -17,6 +17,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -130,10 +132,23 @@ public class GoodsAuditServiceImpl implements GoodsAuditService {
      * 发送 ES 同步消息
      */
     private void sendSyncMessage(Long goodsId, int operationType) {
+        GoodsSyncMessage message = operationType == GoodsAuditMessage.TYPE_CREATE
+                ? GoodsSyncMessage.createMessage(goodsId)
+                : GoodsSyncMessage.updateMessage(goodsId);
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    doSendSyncMessage(goodsId, message);
+                }
+            });
+            return;
+        }
+        doSendSyncMessage(goodsId, message);
+    }
+
+    private void doSendSyncMessage(Long goodsId, GoodsSyncMessage message) {
         try {
-            GoodsSyncMessage message = operationType == GoodsAuditMessage.TYPE_CREATE
-                    ? GoodsSyncMessage.createMessage(goodsId)
-                    : GoodsSyncMessage.updateMessage(goodsId);
             rocketMQTemplate.convertAndSend(RocketMQConfig.GOODS_SYNC_TOPIC, message);
             log.info("发送商品同步消息成功: goodsId={}", goodsId);
         } catch (Exception e) {
@@ -177,3 +192,4 @@ public class GoodsAuditServiceImpl implements GoodsAuditService {
         log.info("商品审核失败: {}, 原因: {}", goods.getProductId(), reason);
     }
 }
+

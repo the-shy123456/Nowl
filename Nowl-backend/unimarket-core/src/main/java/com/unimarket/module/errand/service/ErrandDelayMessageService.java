@@ -27,16 +27,12 @@ public class ErrandDelayMessageService {
     public void sendAutoConfirmMessage(Long taskId, Long deliverTimestamp) {
         ErrandAutoConfirmMessage message = new ErrandAutoConfirmMessage(taskId, deliverTimestamp);
 
-        try {
-            rocketMQTemplate.syncSendDelayTimeMills(
-                    RocketMQConfig.ERRAND_AUTO_CONFIRM_TOPIC,
-                    MessageBuilder.withPayload(message).build(),
-                    RocketMQConfig.ERRAND_AUTO_CONFIRM_DELAY_MS
-            );
-            log.info("发送跑腿自动确认延时消息成功: taskId={}, 延时24小时", taskId);
-        } catch (Exception e) {
-            log.error("发送跑腿自动确认延时消息失败: taskId={}", taskId, e);
-            // 消息发送失败不影响主流程，可以通过定时任务兜底
-        }
+        rocketMQTemplate.syncSendDelayTimeMills(
+                RocketMQConfig.ERRAND_AUTO_CONFIRM_TOPIC,
+                MessageBuilder.withPayload(message).build(),
+                RocketMQConfig.ERRAND_AUTO_CONFIRM_DELAY_MS
+        );
+        log.info("发送跑腿自动确认延时消息成功: taskId={}, 延时24小时", taskId);
     }
 }
+

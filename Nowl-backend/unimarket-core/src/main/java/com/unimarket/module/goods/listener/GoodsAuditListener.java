@@ -32,6 +32,13 @@ public class GoodsAuditListener implements RocketMQListener<GoodsAuditMessage> {
             goodsAuditService.performAudit(message.getProductId(), message.getOperationType());
         } catch (Exception e) {
             log.error("处理商品审核消息失败: productId={}", message.getProductId(), e);
+            throw asRuntimeException(e);
         }
+    }
+
+    private RuntimeException asRuntimeException(Exception e) {
+        return e instanceof RuntimeException runtimeException
+                ? runtimeException
+                : new IllegalStateException("商品审核消息处理失败", e);
     }
 }

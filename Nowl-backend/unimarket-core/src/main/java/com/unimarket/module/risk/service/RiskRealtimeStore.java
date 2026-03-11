@@ -41,8 +41,9 @@ public class RiskRealtimeStore {
             String fingerprint = String.valueOf(fingerprintObj);
             if (!fingerprint.isBlank()) {
                 String key = buildDeviceKey(fingerprint);
-                stringRedisTemplate.opsForSet().add(key, context.getSubjectId());
+                stringRedisTemplate.opsForZSet().add(key, context.getSubjectId(), now);
                 stringRedisTemplate.expire(key, DEVICE_TTL);
+                clearExpiredSamples(key, now - DEVICE_TTL.toMillis());
             }
         }
     }
@@ -87,11 +88,15 @@ public class RiskRealtimeStore {
         return total == null ? 0L : total;
     }
 
-    public int countDeviceSubjects(String fingerprint) {
+    public int countDeviceSubjects(String fingerprint, int windowMinutes) {
         if (fingerprint == null || fingerprint.isBlank()) {
             return 0;
         }
-        Long total = stringRedisTemplate.opsForSet().size(buildDeviceKey(fingerprint));
+        long now = System.currentTimeMillis();
+        long start = now - Math.max(windowMinutes, 1) * 60_000L;
+        String key = buildDeviceKey(fingerprint);
+        clearExpiredSamples(key, now - DEVICE_TTL.toMillis());
+        Long total = stringRedisTemplate.opsForZSet().count(key, start, now);
         return total == null ? 0 : total.intValue();
     }
 

@@ -101,7 +101,7 @@ class RiskControlServiceImplTest {
         rule.setRuleName("聊天频率限制");
         rule.setRuleType("THRESHOLD");
         rule.setDecisionAction("LIMIT");
-        rule.setRuleConfig("{\"maxCount\":1,\"windowMinutes\":10,\"subjectType\":\"USER\"}");
+        rule.setRuleConfig("{\"maxCount\":1,\"windowMinutes\":10,\"subjectType\":\"USER\",\"counterType\":\"EVENT_COUNT\"}");
         when(riskPolicyCacheService.getEnabledRules("CHAT_SEND")).thenReturn(List.of(rule));
         when(riskRealtimeStore.countEvents("CHAT_SEND", "USER", "2002", 10)).thenReturn(1L);
 
@@ -154,12 +154,20 @@ class RiskControlServiceImplTest {
     }
 
     @Test
-    @DisplayName("evaluate: 登录IP失败画像触发 CHALLENGE")
+    @DisplayName("evaluate: 登录失败阈值规则触发 CHALLENGE")
     void evaluate_loginIpProfile_challenge() {
         when(riskModeService.getMode()).thenReturn(RiskMode.FULL);
         when(riskIdGenerator.nextId()).thenReturn(101L, 201L);
         when(riskPolicyCacheService.isWhitelisted("IP", "10.0.0.8")).thenReturn(false);
         when(riskPolicyCacheService.getActiveBlacklist("IP", "10.0.0.8")).thenReturn(null);
+
+        RiskRule rule = new RiskRule();
+        rule.setRuleCode("RULE_LOGIN_FAIL_IP_CHALLENGE");
+        rule.setRuleName("登录失败画像-IP触发安全校验");
+        rule.setRuleType("THRESHOLD");
+        rule.setDecisionAction("CHALLENGE");
+        rule.setRuleConfig("{\"windowMinutes\":30,\"maxCount\":10,\"subjectType\":\"IP\",\"counterType\":\"LOGIN_FAILURE_COUNT\"}");
+        when(riskPolicyCacheService.getEnabledRules("LOGIN")).thenReturn(List.of(rule));
         when(riskRealtimeStore.countLoginFailures("10.0.0.8", 30)).thenReturn(10L);
 
         RiskDecisionResult result = riskControlService.evaluate(RiskContext.builder()
@@ -173,13 +181,21 @@ class RiskControlServiceImplTest {
     }
 
     @Test
-    @DisplayName("evaluate: 设备指纹关联多账号触发 REVIEW")
+    @DisplayName("evaluate: 设备指纹阈值规则触发 REVIEW")
     void evaluate_deviceFingerprint_review() {
         when(riskModeService.getMode()).thenReturn(RiskMode.FULL);
         when(riskIdGenerator.nextId()).thenReturn(101L, 201L, 301L);
         when(riskPolicyCacheService.isWhitelisted("IP", "10.0.0.9")).thenReturn(false);
         when(riskPolicyCacheService.getActiveBlacklist("IP", "10.0.0.9")).thenReturn(null);
-        when(riskRealtimeStore.countDeviceSubjects("device-shared")).thenReturn(3);
+
+        RiskRule rule = new RiskRule();
+        rule.setRuleCode("RULE_DEVICE_MULTI_ACCOUNT_REVIEW");
+        rule.setRuleName("设备指纹关联账号异常人工复核");
+        rule.setRuleType("THRESHOLD");
+        rule.setDecisionAction("REVIEW");
+        rule.setRuleConfig("{\"windowMinutes\":1440,\"maxCount\":3,\"subjectType\":\"DEVICE\",\"counterType\":\"DEVICE_SUBJECT_COUNT\"}");
+        when(riskPolicyCacheService.getEnabledRules("CHAT_SEND")).thenReturn(List.of(rule));
+        when(riskRealtimeStore.countDeviceSubjects("device-shared", 1440)).thenReturn(3);
 
         RiskDecisionResult result = riskControlService.evaluate(RiskContext.builder()
                 .eventType("CHAT_SEND")

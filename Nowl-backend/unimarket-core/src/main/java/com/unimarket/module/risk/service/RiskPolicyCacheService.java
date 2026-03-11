@@ -47,7 +47,9 @@ public class RiskPolicyCacheService {
             return cached;
         }
         List<RiskRule> rules = riskRuleMapper.selectList(new LambdaQueryWrapper<RiskRule>()
-                .eq(RiskRule::getEventType, normalizedEventType)
+                .and(w -> w.eq(RiskRule::getEventType, normalizedEventType)
+                        .or()
+                        .eq(RiskRule::getEventType, "ALL"))
                 .eq(RiskRule::getStatus, 1)
                 .orderByAsc(RiskRule::getPriority)
                 .orderByAsc(RiskRule::getRuleId));
@@ -118,6 +120,7 @@ public class RiskPolicyCacheService {
             return;
         }
         redisCache.delete(RULE_KEY_PREFIX + normalizedEventType);
+        redisCache.delete(RULE_KEY_PREFIX + "ALL");
     }
 
     public void evictBlacklist(String subjectType, String subjectId) {
@@ -158,4 +161,3 @@ public class RiskPolicyCacheService {
         return Math.max(1L, Math.min(seconds, SUBJECT_TTL_SECONDS));
     }
 }
-

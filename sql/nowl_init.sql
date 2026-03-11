@@ -1245,3 +1245,4 @@ INSERT IGNORE INTO `school_info` (`school_code`, `school_name`, `campus_code`, `
 ('SC0147', '上海科技大学', 'CP0440', '岳阳路校区', 1);
 
 
+

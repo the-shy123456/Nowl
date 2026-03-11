@@ -31,7 +31,6 @@ import org.springframework.data.elasticsearch.core.query.HighlightQuery;
 import org.springframework.data.elasticsearch.core.query.highlight.Highlight;
 import org.springframework.data.elasticsearch.core.query.highlight.HighlightField;
 import org.springframework.data.elasticsearch.core.query.highlight.HighlightParameters;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -223,30 +222,24 @@ public class ErrandSearchServiceImpl implements ErrandSearchService {
     }
 
     @Override
-    @Async
     public void syncErrand(Long taskId) {
-        try {
-            ErrandTask task = errandTaskMapper.selectById(taskId);
-            if (task == null) {
-                log.warn("跑腿任务不存在，跳过同步: taskId={}", taskId);
-                return;
-            }
-            if (!isReviewPassed(task.getReviewStatus())) {
-                errandSearchRepository.deleteById(taskId);
-                log.info("跑腿任务未通过审核，已从ES移除: taskId={}, reviewStatus={}", taskId, task.getReviewStatus());
-                return;
-            }
-
-            ErrandDocument document = convertToDocument(task);
-            errandSearchRepository.save(document);
-            log.info("跑腿任务同步到ES成功: taskId={}", taskId);
-        } catch (Exception e) {
-            log.error("跑腿任务同步到ES失败: taskId={}", taskId, e);
+        ErrandTask task = errandTaskMapper.selectById(taskId);
+        if (task == null) {
+            log.warn("跑腿任务不存在，跳过同步: taskId={}", taskId);
+            return;
         }
+        if (!isReviewPassed(task.getReviewStatus())) {
+            errandSearchRepository.deleteById(taskId);
+            log.info("跑腿任务未通过审核，已从ES移除: taskId={}, reviewStatus={}", taskId, task.getReviewStatus());
+            return;
+        }
+
+        ErrandDocument document = convertToDocument(task);
+        errandSearchRepository.save(document);
+        log.info("跑腿任务同步到ES成功: taskId={}", taskId);
     }
 
     @Override
-    @Async
     public void syncErrandBatch(List<Long> taskIds) {
         if (taskIds == null || taskIds.isEmpty()) {
             return;
@@ -282,14 +275,9 @@ public class ErrandSearchServiceImpl implements ErrandSearchService {
     }
 
     @Override
-    @Async
     public void deleteErrand(Long taskId) {
-        try {
-            errandSearchRepository.deleteById(taskId);
-            log.info("从ES删除跑腿任务成功: taskId={}", taskId);
-        } catch (Exception e) {
-            log.error("从ES删除跑腿任务失败: taskId={}", taskId, e);
-        }
+        errandSearchRepository.deleteById(taskId);
+        log.info("从ES删除跑腿任务成功: taskId={}", taskId);
     }
 
     @Override
@@ -459,3 +447,4 @@ public class ErrandSearchServiceImpl implements ErrandSearchService {
                 || ReviewStatus.MANUAL_PASSED.getCode().equals(reviewStatus);
     }
 }
+

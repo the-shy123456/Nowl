@@ -40,6 +40,14 @@ public class ErrandSyncListener implements RocketMQListener<ErrandSyncMessage> {
             }
         } catch (Exception e) {
             log.error("处理跑腿同步消息失败", e);
+            throw asRuntimeException(e);
         }
     }
+
+    private RuntimeException asRuntimeException(Exception e) {
+        return e instanceof RuntimeException runtimeException
+                ? runtimeException
+                : new IllegalStateException("跑腿同步消息处理失败", e);
+    }
 }
+

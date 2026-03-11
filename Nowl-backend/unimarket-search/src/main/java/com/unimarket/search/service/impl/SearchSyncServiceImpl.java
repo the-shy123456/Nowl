@@ -45,19 +45,15 @@ public class SearchSyncServiceImpl implements SearchSyncService {
     }
 
     private void doSyncGoods(Long productId) {
-        try {
-            GoodsInfo goods = goodsInfoMapper.selectById(productId);
-            if (goods == null) {
-                log.warn("商品不存在，跳过同步: productId={}", productId);
-                return;
-            }
-
-            GoodsDocument document = convertToDocument(goods);
-            goodsSearchRepository.save(document);
-            log.info("商品同步到ES成功: productId={}", productId);
-        } catch (Exception e) {
-            log.error("商品同步到ES失败: productId={}", productId, e);
+        GoodsInfo goods = goodsInfoMapper.selectById(productId);
+        if (goods == null) {
+            log.warn("商品不存在，跳过同步: productId={}", productId);
+            return;
         }
+
+        GoodsDocument document = convertToDocument(goods);
+        goodsSearchRepository.save(document);
+        log.info("商品同步到ES成功: productId={}", productId);
     }
 
     @Override
@@ -82,37 +78,25 @@ public class SearchSyncServiceImpl implements SearchSyncService {
 
     @Override
     public void deleteGoods(Long productId) {
-        try {
-            goodsSearchRepository.deleteById(productId);
-            log.info("从ES删除商品成功: productId={}", productId);
-        } catch (Exception e) {
-            log.error("从ES删除商品失败: productId={}", productId, e);
-        }
+        goodsSearchRepository.deleteById(productId);
+        log.info("从ES删除商品成功: productId={}", productId);
     }
 
     @Override
     public void updateHotScore(Long productId, Double hotScore) {
-        try {
-            goodsSearchRepository.findById(productId).ifPresent(doc -> {
-                doc.setHotScore(hotScore);
-                goodsSearchRepository.save(doc);
-                log.debug("更新商品热度分成功: productId={}, hotScore={}", productId, hotScore);
-            });
-        } catch (Exception e) {
-            log.error("更新商品热度分失败: productId={}", productId, e);
-        }
+        goodsSearchRepository.findById(productId).ifPresent(doc -> {
+            doc.setHotScore(hotScore);
+            goodsSearchRepository.save(doc);
+            log.debug("更新商品热度分成功: productId={}, hotScore={}", productId, hotScore);
+        });
     }
 
     @Override
     public void updateViewCount(Long productId, Integer viewCount) {
-        try {
-            goodsSearchRepository.findById(productId).ifPresent(doc -> {
-                doc.setViewCount(viewCount);
-                goodsSearchRepository.save(doc);
-            });
-        } catch (Exception e) {
-            log.error("更新商品浏览量失败: productId={}", productId, e);
-        }
+        goodsSearchRepository.findById(productId).ifPresent(doc -> {
+            doc.setViewCount(viewCount);
+            goodsSearchRepository.save(doc);
+        });
     }
 
     @Override
@@ -274,3 +258,4 @@ public class SearchSyncServiceImpl implements SearchSyncService {
         }).collect(Collectors.toList());
     }
 }
+

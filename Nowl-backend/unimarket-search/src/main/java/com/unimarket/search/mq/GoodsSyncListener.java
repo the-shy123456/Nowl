@@ -48,6 +48,14 @@ public class GoodsSyncListener implements RocketMQListener<GoodsSyncMessage> {
             }
         } catch (Exception e) {
             log.error("处理商品同步消息失败", e);
+            throw asRuntimeException(e);
         }
     }
+
+    private RuntimeException asRuntimeException(Exception e) {
+        return e instanceof RuntimeException runtimeException
+                ? runtimeException
+                : new IllegalStateException("商品同步消息处理失败", e);
+    }
 }
+

@@ -37,6 +37,8 @@ import org.redisson.api.RedissonClient;
 import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -56,6 +58,8 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class ErrandServiceImpl implements ErrandService {
+
+    private static final String ERRAND_SYNC_TOPIC = "errand-sync-topic";
 
     private final ErrandTaskMapper errandTaskMapper;
     private final UserInfoMapper userInfoMapper;
@@ -155,7 +159,7 @@ public class ErrandServiceImpl implements ErrandService {
                 task.getTaskId(), userId, task.getReward(), task.getReviewStatus());
 
         if (isReviewPassed(task.getReviewStatus())) {
-            rocketMQTemplate.convertAndSend("errand-sync-topic", ErrandSyncMessage.createMessage(task.getTaskId()));
+            sendErrandSyncAfterCommit(task.getTaskId(), ErrandSyncMessage.createMessage(task.getTaskId()), "发布");
             noticeService.sendNotice(
                     task.getPublisherId(),
                     "跑腿任务审核通过",
@@ -305,9 +309,9 @@ public class ErrandServiceImpl implements ErrandService {
         log.info("跑腿任务修改成功: taskId={}, userId={}, reviewStatus={}", taskId, userId, task.getReviewStatus());
 
         if (isReviewPassed(task.getReviewStatus())) {
-            rocketMQTemplate.convertAndSend("errand-sync-topic", ErrandSyncMessage.updateMessage(taskId));
+            sendErrandSyncAfterCommit(taskId, ErrandSyncMessage.updateMessage(taskId), "修改");
         } else {
-            rocketMQTemplate.convertAndSend("errand-sync-topic", ErrandSyncMessage.deleteMessage(taskId));
+            sendErrandSyncAfterCommit(taskId, ErrandSyncMessage.deleteMessage(taskId), "下线");
             if (ReviewStatus.WAIT_MANUAL.getCode().equals(task.getReviewStatus())) {
                 noticeService.sendNotice(
                         task.getPublisherId(),
@@ -391,8 +395,7 @@ public class ErrandServiceImpl implements ErrandService {
             );
 
             // 同步到ES
-            rocketMQTemplate.convertAndSend("errand-sync-topic", ErrandSyncMessage.updateMessage(taskId));
-
+            sendErrandSyncAfterCommit(taskId, ErrandSyncMessage.updateMessage(taskId), "接单");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new BusinessException("接单过程中断");
@@ -440,7 +443,7 @@ public class ErrandServiceImpl implements ErrandService {
 
             // 发送24小时自动确认延时消息
             long deliverTimestamp = task.getDeliverTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
-            errandDelayMessageService.sendAutoConfirmMessage(taskId, deliverTimestamp);
+            runAfterCommit(() -> errandDelayMessageService.sendAutoConfirmMessage(taskId, deliverTimestamp));
 
             log.info("跑腿任务送达: taskId={}, 已加入24小时自动确认队列", taskId);
 
@@ -454,7 +457,7 @@ public class ErrandServiceImpl implements ErrandService {
             );
 
             // 同步到ES
-            rocketMQTemplate.convertAndSend("errand-sync-topic", ErrandSyncMessage.updateMessage(taskId));
+            sendErrandSyncAfterCommit(taskId, ErrandSyncMessage.updateMessage(taskId), "送达");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new BusinessException("送达过程中断");
@@ -514,7 +517,7 @@ public class ErrandServiceImpl implements ErrandService {
             );
 
             // 同步到ES
-            rocketMQTemplate.convertAndSend("errand-sync-topic", ErrandSyncMessage.updateMessage(taskId));
+            sendErrandSyncAfterCommit(taskId, ErrandSyncMessage.updateMessage(taskId), "确认完成");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new BusinessException("确认过程中断");
@@ -588,7 +591,7 @@ public class ErrandServiceImpl implements ErrandService {
             );
 
             // 同步到ES（删除）
-            rocketMQTemplate.convertAndSend("errand-sync-topic", ErrandSyncMessage.deleteMessage(taskId));
+            sendErrandSyncAfterCommit(taskId, ErrandSyncMessage.deleteMessage(taskId), "取消");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new BusinessException("取消过程中断");
@@ -636,6 +639,38 @@ public class ErrandServiceImpl implements ErrandService {
     private boolean isReviewPassed(Integer reviewStatus) {
         return ReviewStatus.AI_PASSED.getCode().equals(reviewStatus)
                 || ReviewStatus.MANUAL_PASSED.getCode().equals(reviewStatus);
+    }
+
+    private void sendErrandSyncAfterCommit(Long taskId, ErrandSyncMessage message, String actionName) {
+        runAfterCommit(() -> {
+            try {
+                rocketMQTemplate.convertAndSend(ERRAND_SYNC_TOPIC, message);
+                log.info("发送跑腿任务{}同步消息成功: taskId={}, type={}", actionName, taskId, message.getType());
+            } catch (Exception e) {
+                log.error("发送跑腿任务{}同步消息失败: taskId={}, type={}", actionName, taskId, message.getType(), e);
+            }
+        });
+    }
+
+    // 统一在事务提交后触发异步副作用，避免主事务回滚时消息已提前发出。
+    private void runAfterCommit(Runnable task) {
+        Runnable safeTask = () -> {
+            try {
+                task.run();
+            } catch (Exception e) {
+                log.error("事务提交后执行跑腿异步副作用失败", e);
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    safeTask.run();
+                }
+            });
+            return;
+        }
+        safeTask.run();
     }
 
     /**
@@ -700,3 +735,4 @@ public class ErrandServiceImpl implements ErrandService {
         }).collect(Collectors.toList());
     }
 }
+
