@@ -12,6 +12,23 @@ public class CacheConstants {
     public static final long USER_INFO_EXPIRE = 30 * 60;
 
     /**
+     * 用户信息缓存（区分 full / public）
+     * full: 包含 IAM 权限信息，TTL 设短一些降低不一致风险
+     * public: 对外公开信息，TTL 可适当长一些
+     */
+    public static final String USER_INFO_FULL = "user:info:full:";
+    public static final long USER_INFO_FULL_EXPIRE = 60;
+
+    public static final String USER_INFO_PUBLIC = "user:info:public:";
+    public static final long USER_INFO_PUBLIC_EXPIRE = 120;
+
+    /**
+     * 关注关系检查缓存
+     */
+    public static final String FOLLOW_CHECK = "user:follow:check:";
+    public static final long FOLLOW_CHECK_EXPIRE = 30;
+
+    /**
      * 商品分类缓存，过期时间1天
      */
     public static final String GOODS_CATEGORY = "goods:category";

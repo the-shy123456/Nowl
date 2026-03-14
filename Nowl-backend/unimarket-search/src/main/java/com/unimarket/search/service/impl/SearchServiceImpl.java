@@ -6,6 +6,7 @@ import co.elastic.clients.elasticsearch._types.query_dsl.BoolQuery;
 import co.elastic.clients.elasticsearch._types.query_dsl.Query;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.unimarket.common.result.PageResult;
+import com.unimarket.common.utils.RedisCache;
 import com.unimarket.module.goods.entity.CollectionRecord;
 import com.unimarket.module.goods.mapper.CollectionRecordMapper;
 import com.unimarket.module.school.entity.SchoolInfo;
@@ -46,6 +47,7 @@ public class SearchServiceImpl implements SearchService {
 
     private final ElasticsearchOperations elasticsearchOperations;
     private final StringRedisTemplate stringRedisTemplate;
+    private final RedisCache redisCache;
     private final CollectionRecordMapper collectionRecordMapper;
     private final UserInfoMapper userInfoMapper;
     private final SchoolInfoMapper schoolInfoMapper;
@@ -284,15 +286,22 @@ public class SearchServiceImpl implements SearchService {
             return;
         }
 
-        Set<Long> sellerIds = items.stream()
-            .map(SearchResultVO::getSellerId)
-            .filter(Objects::nonNull)
-            .collect(Collectors.toSet());
+        // 只有当 ES 文档里缺少 school/campus 时，才回表查卖家信息兜底，避免每次搜索都打 MySQL。
+        boolean needSellerFallback = items.stream().anyMatch(item ->
+            StrUtil.isBlank(item.getSchoolCode()) || StrUtil.isBlank(item.getCampusCode())
+        );
         Map<Long, UserInfo> sellerMap = new HashMap<>();
-        if (!sellerIds.isEmpty()) {
-            List<UserInfo> sellers = userInfoMapper.selectBatchIds(sellerIds);
-            sellerMap = sellers.stream()
-                .collect(Collectors.toMap(UserInfo::getUserId, user -> user, (a, b) -> a));
+        if (needSellerFallback) {
+            Set<Long> sellerIds = items.stream()
+                .filter(item -> StrUtil.isBlank(item.getSchoolCode()) || StrUtil.isBlank(item.getCampusCode()))
+                .map(SearchResultVO::getSellerId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+            if (!sellerIds.isEmpty()) {
+                List<UserInfo> sellers = userInfoMapper.selectBatchIds(sellerIds);
+                sellerMap = sellers.stream()
+                    .collect(Collectors.toMap(UserInfo::getUserId, user -> user, (a, b) -> a));
+            }
         }
 
         Set<String> schoolCodes = new HashSet<>();
@@ -309,18 +318,51 @@ public class SearchServiceImpl implements SearchService {
             }
         }
 
+        // 优先复用学校/校区缓存（SchoolServiceImpl 已缓存 campus:list:<schoolCode>），命中则无需查询 SchoolInfo 表。
         Map<String, SchoolInfo> schoolMap = new HashMap<>();
-        if (!schoolCodes.isEmpty() && !campusCodes.isEmpty()) {
+        Set<String> unresolvedKeys = new HashSet<>();
+        if (!schoolCodes.isEmpty()) {
+            for (String schoolCode : schoolCodes) {
+                // 复用 unimarket-core 的缓存 key 规范
+                List<SchoolInfo> cachedCampuses = redisCache.getCacheList("campus:list:" + schoolCode);
+                if (cachedCampuses == null || cachedCampuses.isEmpty()) {
+                    continue;
+                }
+                for (SchoolInfo campus : cachedCampuses) {
+                    String key = buildSchoolCampusKey(campus.getSchoolCode(), campus.getCampusCode());
+                    if (key != null) {
+                        schoolMap.putIfAbsent(key, campus);
+                    }
+                }
+            }
+        }
+
+        for (SearchResultVO item : items) {
+            String key = buildSchoolCampusKey(item.getSchoolCode(), item.getCampusCode());
+            if (key != null && !schoolMap.containsKey(key)) {
+                unresolvedKeys.add(key);
+            }
+        }
+
+        // 缓存未命中的 key 再回表查询一次兜底（只查缺失部分）
+        if (!unresolvedKeys.isEmpty()) {
+            Set<String> missSchoolCodes = unresolvedKeys.stream()
+                .map(k -> k.split("\\|", 2)[0])
+                .collect(Collectors.toSet());
+            Set<String> missCampusCodes = unresolvedKeys.stream()
+                .map(k -> k.split("\\|", 2)[1])
+                .collect(Collectors.toSet());
             LambdaQueryWrapper<SchoolInfo> schoolWrapper = new LambdaQueryWrapper<>();
-            schoolWrapper.in(SchoolInfo::getSchoolCode, schoolCodes)
-                .in(SchoolInfo::getCampusCode, campusCodes)
+            schoolWrapper.in(SchoolInfo::getSchoolCode, missSchoolCodes)
+                .in(SchoolInfo::getCampusCode, missCampusCodes)
                 .eq(SchoolInfo::getStatus, 1);
             List<SchoolInfo> schools = schoolInfoMapper.selectList(schoolWrapper);
-            schoolMap = schools.stream().collect(Collectors.toMap(
-                school -> buildSchoolCampusKey(school.getSchoolCode(), school.getCampusCode()),
-                school -> school,
-                (a, b) -> a
-            ));
+            for (SchoolInfo school : schools) {
+                String key = buildSchoolCampusKey(school.getSchoolCode(), school.getCampusCode());
+                if (key != null) {
+                    schoolMap.putIfAbsent(key, school);
+                }
+            }
         }
 
         for (SearchResultVO item : items) {

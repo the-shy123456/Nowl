@@ -276,12 +276,64 @@ public class UserServiceImpl extends ServiceImpl<UserInfoMapper, UserInfo> imple
 
     @Override
     public UserInfoVO getUserInfo(Long userId) {
-        return buildUserInfo(userId, true);
+        if (userId == null) {
+            throw new BusinessException(ResultCode.USER_NOT_LOGIN);
+        }
+
+        String cacheKey = buildUserInfoFullCacheKey(userId);
+        UserInfoVO cached = redisCache.get(cacheKey, UserInfoVO.class);
+        if (cached != null) {
+            return cached;
+        }
+
+        UserInfoVO vo = buildUserInfo(userId, true);
+        // full 包含权限信息：TTL 设短一些，尽量降低权限变更带来的不一致风险
+        redisCache.setWithJitter(cacheKey, vo, CacheConstants.USER_INFO_FULL_EXPIRE, 10);
+        return vo;
     }
 
     @Override
     public UserInfoVO getPublicUserInfo(Long userId) {
-        return buildUserInfo(userId, false);
+        if (userId == null) {
+            throw new BusinessException(ResultCode.PARAM_ERROR);
+        }
+
+        String cacheKey = buildUserInfoPublicCacheKey(userId);
+        UserInfoVO cached = redisCache.get(cacheKey, UserInfoVO.class);
+        if (cached != null) {
+            return cached;
+        }
+
+        UserInfoVO vo = buildUserInfo(userId, false);
+        redisCache.setWithJitter(cacheKey, vo, CacheConstants.USER_INFO_PUBLIC_EXPIRE, 10);
+        return vo;
+    }
+
+    private String buildUserInfoFullCacheKey(Long userId) {
+        return CacheConstants.USER_INFO_FULL + userId;
+    }
+
+    private String buildUserInfoPublicCacheKey(Long userId) {
+        return CacheConstants.USER_INFO_PUBLIC + userId;
+    }
+
+    private String buildFollowCheckCacheKey(Long userId, Long targetUserId) {
+        return CacheConstants.FOLLOW_CHECK + userId + ":" + targetUserId;
+    }
+
+    private void evictUserInfoCache(Long userId) {
+        if (userId == null) {
+            return;
+        }
+        redisCache.delete(buildUserInfoFullCacheKey(userId));
+        redisCache.delete(buildUserInfoPublicCacheKey(userId));
+    }
+
+    private void evictFollowCheckCache(Long userId, Long targetUserId) {
+        if (userId == null || targetUserId == null) {
+            return;
+        }
+        redisCache.delete(buildFollowCheckCacheKey(userId, targetUserId));
     }
 
     private UserInfoVO buildUserInfo(Long userId, boolean includeIamAuth) {
@@ -362,6 +414,9 @@ public class UserServiceImpl extends ServiceImpl<UserInfoMapper, UserInfo> imple
         // 3. 保存到数据库
         userInfoMapper.updateById(userInfo);
 
+        // 主动失效，避免读到旧缓存
+        evictUserInfoCache(userId);
+
         log.info("用户信息更新成功: userId={}", userId);
     }
 
@@ -386,6 +441,7 @@ public class UserServiceImpl extends ServiceImpl<UserInfoMapper, UserInfo> imple
         }
         userInfo.setRunnableStatus(RunnableStatus.PENDING.getCode());
         userInfoMapper.updateById(userInfo);
+        evictUserInfoCache(userId);
         log.info("跑腿员申请已提交: userId={}", userId);
     }
 
@@ -450,6 +506,8 @@ public class UserServiceImpl extends ServiceImpl<UserInfoMapper, UserInfo> imple
 
         if (follow != null) {
             if (follow.getIsCancel() == 0) {
+                // 已经关注，保证关注检查缓存不错误
+                evictFollowCheckCache(userId, targetUserId);
                 return; // 已经关注，直接返回
             }
             // 之前关注过但取消了，重新关注
@@ -474,6 +532,11 @@ public class UserServiceImpl extends ServiceImpl<UserInfoMapper, UserInfo> imple
         // 被关注者：粉丝数+1
         targetUser.setFanCount(targetUser.getFanCount() + 1);
         userInfoMapper.updateById(targetUser);
+
+        // 关注关系变更：失效相关缓存
+        evictFollowCheckCache(userId, targetUserId);
+        evictUserInfoCache(userId);
+        evictUserInfoCache(targetUserId);
     }
 
     @Override
@@ -491,6 +554,8 @@ public class UserServiceImpl extends ServiceImpl<UserInfoMapper, UserInfo> imple
         UserFollow follow = userFollowMapper.selectOne(wrapper);
 
         if (follow == null) {
+            // 保证关注检查缓存不错误
+            evictFollowCheckCache(userId, targetUserId);
             return; // 未关注，直接返回
         }
 
@@ -512,6 +577,11 @@ public class UserServiceImpl extends ServiceImpl<UserInfoMapper, UserInfo> imple
             targetUser.setFanCount(targetUser.getFanCount() - 1);
             userInfoMapper.updateById(targetUser);
         }
+
+        // 关注关系变更：失效相关缓存
+        evictFollowCheckCache(userId, targetUserId);
+        evictUserInfoCache(userId);
+        evictUserInfoCache(targetUserId);
     }
 
     @Override
@@ -597,11 +667,20 @@ public class UserServiceImpl extends ServiceImpl<UserInfoMapper, UserInfo> imple
         if (userId == null || targetUserId == null || userId.equals(targetUserId)) {
             return false;
         }
+
+        String cacheKey = buildFollowCheckCacheKey(userId, targetUserId);
+        Boolean cached = redisCache.get(cacheKey, Boolean.class);
+        if (cached != null) {
+            return cached;
+        }
+
         LambdaQueryWrapper<UserFollow> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(UserFollow::getUserId, userId)
                 .eq(UserFollow::getFollowedUserId, targetUserId)
                 .eq(UserFollow::getIsCancel, 0);
-        return userFollowMapper.selectCount(wrapper) > 0;
+        boolean result = userFollowMapper.selectCount(wrapper) > 0;
+        redisCache.setWithJitter(cacheKey, result, CacheConstants.FOLLOW_CHECK_EXPIRE, 20);
+        return result;
     }
 
     @Override

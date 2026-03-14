@@ -69,13 +69,17 @@ public class ErrandSearchServiceImpl implements ErrandSearchService {
 
         // 关键词搜索
         if (StrUtil.isNotBlank(request.getKeyword())) {
-            boolQuery.must(Query.of(q -> q
-                .multiMatch(m -> m
-                    .query(request.getKeyword())
-                    .fields("title^3", "title.pinyin^2", "description", "taskContent", "pickupAddress", "deliveryAddress")
-                    .fuzziness("AUTO")
-                )
-            ));
+            String keyword = request.getKeyword().trim();
+            List<String> fields = resolveKeywordSearchFields(keyword);
+            boolean enableFuzziness = shouldEnableFuzziness(keyword);
+
+            boolQuery.must(Query.of(q -> q.multiMatch(m -> {
+                m.query(keyword).fields(fields);
+                if (enableFuzziness) {
+                    m.fuzziness("AUTO");
+                }
+                return m;
+            })));
         }
 
         // 任务状态过滤：默认仅展示待接单任务，避免已完成/待确认任务出现在公开接单页
@@ -144,6 +148,42 @@ public class ErrandSearchServiceImpl implements ErrandSearchService {
         }
 
         return queryBuilder.build();
+    }
+
+    private List<String> resolveKeywordSearchFields(String keyword) {
+        // 说明：地址字段（pickup/delivery）不参与关键词检索，避免召回过宽且拖慢查询
+        List<String> fields = new ArrayList<>();
+        fields.add("title^3");
+        fields.add("description");
+        fields.add("taskContent");
+
+        // 仅当用户输入更像拼音/英文时，才把 pinyin 字段纳入匹配
+        if (isAsciiAlphaNumeric(keyword)) {
+            fields.add("title.pinyin^2");
+        }
+        return fields;
+    }
+
+    private boolean shouldEnableFuzziness(String keyword) {
+        // fuzziness 对中文检索的收益不大但成本很高，容易放大 ES 压力与尾延迟
+        // 仅在输入为纯英数（如拼音/英文/数字）且长度较短时启用
+        return isAsciiAlphaNumeric(keyword) && keyword.length() <= 16;
+    }
+
+    private boolean isAsciiAlphaNumeric(String keyword) {
+        if (keyword == null || keyword.isBlank()) {
+            return false;
+        }
+        for (int i = 0; i < keyword.length(); i++) {
+            char ch = keyword.charAt(i);
+            if (ch >= 128) {
+                return false;
+            }
+            if (!Character.isLetterOrDigit(ch)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void applySorting(NativeQueryBuilder queryBuilder, Integer sortType, boolean hasKeyword) {

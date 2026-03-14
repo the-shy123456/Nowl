@@ -1,6 +1,16 @@
 server:
   port: ${SERVER_PORT:8080}
 
+unimarket:
+  search:
+    tracking:
+      async:
+        core-pool-size: 4
+        max-pool-size: 8
+        queue-capacity: 5000
+
+
+
 spring:
   application:
     name: nowl-backend

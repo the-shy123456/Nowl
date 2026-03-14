@@ -8,6 +8,7 @@ import com.unimarket.search.dto.SearchRequestDTO;
 import com.unimarket.search.service.ErrandSearchService;
 import com.unimarket.search.service.SearchService;
 import com.unimarket.search.service.SearchSyncService;
+import com.unimarket.search.service.SearchTrackingAsyncService;
 import com.unimarket.search.vo.ErrandSearchResultVO;
 import com.unimarket.search.vo.SearchResultVO;
 import com.unimarket.security.UserContextHolder;
@@ -36,6 +37,7 @@ public class SearchController {
     private final SearchSyncService searchSyncService;
     private final ErrandSearchService errandSearchService;
     private final CategoryService categoryService;
+    private final SearchTrackingAsyncService searchTrackingAsyncService;
 
     /**
      * 商品搜索
@@ -61,8 +63,8 @@ public class SearchController {
 
         // 记录搜索历史和热搜
         if (request.getKeyword() != null && !request.getKeyword().isEmpty()) {
-            searchService.recordSearchHistory(userId, request.getKeyword());
-            searchService.incrementHotWord(request.getKeyword(), request.getSchoolCode());
+            searchTrackingAsyncService.recordSearchHistory(userId, request.getKeyword());
+            searchTrackingAsyncService.incrementHotWord(request.getKeyword(), request.getSchoolCode());
         }
 
         PageResult<SearchResultVO> result = searchService.search(request, userId);
