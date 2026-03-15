@@ -8,8 +8,10 @@ import com.unimarket.ai.service.AiAuditService;
 import com.unimarket.common.enums.ErrandStatus;
 import com.unimarket.common.enums.NoticeType;
 import com.unimarket.common.enums.ReviewStatus;
+import com.unimarket.common.constant.CacheConstants;
 import com.unimarket.common.mq.ErrandAuditMessage;
 import com.unimarket.common.mq.ErrandSyncMessage;
+import com.unimarket.common.utils.RedisCache;
 import com.unimarket.module.errand.dto.ErrandAuditResult;
 import com.unimarket.module.errand.entity.ErrandTask;
 import com.unimarket.module.errand.mapper.ErrandTaskMapper;
@@ -44,6 +46,7 @@ public class ErrandAuditServiceImpl implements ErrandAuditService {
     private final NoticeService noticeService;
     private final RocketMQTemplate rocketMQTemplate;
     private final UserInfoMapper userInfoMapper;
+    private final RedisCache redisCache;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -240,6 +243,11 @@ public class ErrandAuditServiceImpl implements ErrandAuditService {
         }
         task.setReviewStatus(auditResult.getReviewStatus());
         task.setAuditReason(auditResult.getReason());
+        // 审核结果变更会影响详情可见性：主动失效详情缓存，避免旧数据被继续读取
+        redisCache.delete(CacheConstants.ERRAND_DETAIL + "guest:" + task.getTaskId());
+        if (StrUtil.isNotBlank(task.getSchoolCode())) {
+            redisCache.delete(CacheConstants.ERRAND_DETAIL + task.getSchoolCode().trim() + ":" + task.getTaskId());
+        }
         return true;
     }
 

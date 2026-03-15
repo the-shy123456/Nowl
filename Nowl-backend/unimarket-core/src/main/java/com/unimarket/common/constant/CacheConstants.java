@@ -67,4 +67,11 @@ public class CacheConstants {
      */
     public static final String ERRAND_LOCATION = "errand:location:";
     public static final long ERRAND_LOCATION_EXPIRE = 60;
+
+    /**
+     * 跑腿任务详情缓存前缀
+     * - 仅缓存“已审核通过”的任务详情，避免未审核内容被错误复用/泄露
+     */
+    public static final String ERRAND_DETAIL = "errand:detail:";
+    public static final long ERRAND_DETAIL_EXPIRE = 60;
 }

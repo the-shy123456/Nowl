@@ -81,7 +81,7 @@ public class ErrandPermissionService {
     /**
      * 判断当前用户是否可以取消任务
      * - 待接单状态：仅发布者可取消
-     * - 进行中状态：发布者和接单人都可取消
+     * - 进行中状态：发布者可取消；接单人“取消”将被视为放弃接单并重新上架
      *
      * @param taskId 任务ID
      * @param userId 用户ID

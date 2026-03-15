@@ -11,8 +11,10 @@ import com.unimarket.common.enums.ReviewStatus;
 import com.unimarket.common.exception.BusinessException;
 import com.unimarket.common.mq.ErrandAuditMessage;
 import com.unimarket.common.mq.ErrandSyncMessage;
+import com.unimarket.common.constant.CacheConstants;
 import com.unimarket.common.result.PageQuery;
 import com.unimarket.common.result.ResultCode;
+import com.unimarket.common.utils.RedisCache;
 import com.unimarket.module.errand.dto.ErrandPublishDTO;
 import com.unimarket.module.errand.dto.ErrandQueryDTO;
 import com.unimarket.module.errand.dto.LocationUploadDTO;
@@ -69,6 +71,7 @@ public class ErrandServiceImpl implements ErrandService {
     private final ErrandDelayMessageService errandDelayMessageService;
     private final RocketMQTemplate rocketMQTemplate;
     private final RiskControlService riskControlService;
+    private final RedisCache redisCache;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -149,6 +152,7 @@ public class ErrandServiceImpl implements ErrandService {
         }
 
         errandTaskMapper.insert(task);
+        evictErrandDetailCache(task.getTaskId(), task.getSchoolCode());
         log.info("发布跑腿任务成功: taskId={}, userId={}, reward={}, reviewStatus={}",
                 task.getTaskId(), userId, task.getReward(), task.getReviewStatus());
 
@@ -187,6 +191,14 @@ public class ErrandServiceImpl implements ErrandService {
 
     @Override
     public ErrandVO getErrandDetail(Long taskId) {
+        String cacheKey = buildErrandDetailCacheKeyForRead(taskId);
+        if (cacheKey != null) {
+            ErrandVO cached = redisCache.get(cacheKey, ErrandVO.class);
+            if (cached != null) {
+                return cached;
+            }
+        }
+
         ErrandTask task = errandTaskMapper.selectById(taskId);
         if (task == null) {
             throw new BusinessException(ResultCode.PARAM_IS_INVALID);
@@ -196,8 +208,16 @@ public class ErrandServiceImpl implements ErrandService {
             if (currentUserId == null || !currentUserId.equals(task.getPublisherId())) {
                 throw new BusinessException("任务不存在或未通过审核");
             }
+            // 未审核通过：不缓存，避免不同用户请求间复用导致信息泄露
+            return convertToVO(task);
         }
-        return convertToVO(task);
+
+        ErrandVO vo = convertToVO(task);
+        // 已审核通过：允许缓存（带抖动防雪崩）。注意：缓存 key 必须带 tenant（schoolCode），避免绕过多租户过滤。
+        if (cacheKey != null) {
+            redisCache.setWithJitter(cacheKey, vo, CacheConstants.ERRAND_DETAIL_EXPIRE, 10);
+        }
+        return vo;
     }
 
     @Override
@@ -274,6 +294,7 @@ public class ErrandServiceImpl implements ErrandService {
         }
 
         errandTaskMapper.updateById(task);
+        evictErrandDetailCache(taskId, task.getSchoolCode());
         log.info("跑腿任务修改成功: taskId={}, userId={}, reviewStatus={}", taskId, userId, task.getReviewStatus());
 
         // 重新提审期间任务不可见：先从 ES 移除，审核通过后再恢复
@@ -314,6 +335,16 @@ public class ErrandServiceImpl implements ErrandService {
                 throw new BusinessException("不能接自己发布的任务");
             }
 
+            // 校园隔离：仅允许同学校接单（校区可不同）
+            String acceptorSchoolCode = user.getSchoolCode();
+            String taskSchoolCode = task.getSchoolCode();
+            if (StrUtil.isBlank(acceptorSchoolCode) || StrUtil.isBlank(taskSchoolCode)) {
+                throw new BusinessException("用户或任务学校信息缺失，暂不可接单");
+            }
+            if (!acceptorSchoolCode.trim().equalsIgnoreCase(taskSchoolCode.trim())) {
+                throw new BusinessException("仅支持同学校范围内接单");
+            }
+
             Map<String, Object> features = new HashMap<>();
             features.put("taskId", taskId);
             features.put("reward", task.getReward());
@@ -339,6 +370,7 @@ public class ErrandServiceImpl implements ErrandService {
             task.setTaskStatus(ErrandStatus.IN_PROGRESS.getCode());
             task.setAcceptTime(LocalDateTime.now());
             errandTaskMapper.updateById(task);
+            evictErrandDetailCache(taskId, task.getSchoolCode());
 
             log.info("接单成功: taskId={}, acceptorId={}", taskId, userId);
 
@@ -397,6 +429,7 @@ public class ErrandServiceImpl implements ErrandService {
             task.setEvidenceImage(evidenceImage);
             task.setDeliverTime(LocalDateTime.now());
             errandTaskMapper.updateById(task);
+            evictErrandDetailCache(taskId, task.getSchoolCode());
 
             // 发送24小时自动确认延时消息
             long deliverTimestamp = task.getDeliverTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
@@ -461,6 +494,7 @@ public class ErrandServiceImpl implements ErrandService {
             task.setTaskStatus(ErrandStatus.COMPLETED.getCode());
             task.setConfirmTime(LocalDateTime.now());
             errandTaskMapper.updateById(task);
+            evictErrandDetailCache(taskId, task.getSchoolCode());
 
             log.info("跑腿任务确认完成: taskId={}, 佣金已结算 {}", taskId, task.getReward());
 
@@ -512,6 +546,44 @@ public class ErrandServiceImpl implements ErrandService {
                 throw new BusinessException("任务审核未通过且悬赏已退还，无需重复取消");
             }
 
+            Long currentUserId = UserContextHolder.getUserId();
+            if (currentUserId == null) {
+                throw new BusinessException(ResultCode.USER_NOT_LOGIN);
+            }
+            boolean isPublisher = currentUserId.equals(task.getPublisherId());
+            boolean isAcceptor = task.getAcceptorId() != null && currentUserId.equals(task.getAcceptorId());
+
+            // 接单人取消：视为放弃接单并重新上架（仅进行中状态允许）
+            if (isAcceptor && ErrandStatus.IN_PROGRESS.getCode().equals(status)) {
+                task.setAcceptorId(null);
+                task.setAcceptTime(null);
+                task.setTaskStatus(ErrandStatus.PENDING.getCode());
+                task.setCancelTime(null);
+                task.setCancelReason(null);
+                errandTaskMapper.updateById(task);
+                evictErrandDetailCache(taskId, task.getSchoolCode());
+
+                log.info("接单人放弃接单，任务重新上架: taskId={}, acceptorId={}", taskId, currentUserId);
+
+                // 通知发布者
+                noticeService.sendNotice(
+                        task.getPublisherId(),
+                        "接单人已放弃接单",
+                        "跑腿任务 [" + task.getTitle() + "] 的接单人已放弃接单，任务已重新上架，可继续等待其他跑腿员接单。",
+                        NoticeType.TRADE.getCode(),
+                        taskId
+                );
+
+                // 同步到ES（更新）
+                sendErrandSyncAfterCommit(taskId, ErrandSyncMessage.updateMessage(taskId), "放弃接单");
+                return;
+            }
+
+            // 非发布者不允许把任务取消为“已取消”（接单人取消已在上方处理）
+            if (!isPublisher) {
+                throw new BusinessException("无权限取消该任务");
+            }
+
             // 退还佣金给发布者
             UserInfo publisher = userInfoMapper.selectById(task.getPublisherId());
             if (publisher != null) {
@@ -529,6 +601,7 @@ public class ErrandServiceImpl implements ErrandService {
             task.setCancelTime(LocalDateTime.now());
             task.setCancelReason(normalizedReason);
             errandTaskMapper.updateById(task);
+            evictErrandDetailCache(taskId, task.getSchoolCode());
 
             log.info("跑腿任务取消: taskId={}, reason={}", taskId, normalizedReason);
 
@@ -599,6 +672,50 @@ public class ErrandServiceImpl implements ErrandService {
     private boolean isReviewPassed(Integer reviewStatus) {
         return ReviewStatus.AI_PASSED.getCode().equals(reviewStatus)
                 || ReviewStatus.MANUAL_PASSED.getCode().equals(reviewStatus);
+    }
+
+    private String buildErrandDetailCacheKeyForRead(Long taskId) {
+        if (taskId == null) {
+            return null;
+        }
+        // 游客可看全部：按 guest 维度缓存即可
+        if (UserContextHolder.isGuest()) {
+            return CacheConstants.ERRAND_DETAIL + "guest:" + taskId;
+        }
+        // 已登录用户：必须带 schoolCode，避免绕过多租户过滤
+        String schoolCode = UserContextHolder.getSchoolCode();
+        if (StrUtil.isBlank(schoolCode)) {
+            return null;
+        }
+        return CacheConstants.ERRAND_DETAIL + schoolCode.trim() + ":" + taskId;
+    }
+
+    private String buildErrandDetailCacheKeyForSchool(Long taskId, String schoolCode) {
+        if (taskId == null || StrUtil.isBlank(schoolCode)) {
+            return null;
+        }
+        return CacheConstants.ERRAND_DETAIL + schoolCode.trim() + ":" + taskId;
+    }
+
+    private String buildErrandDetailCacheKeyForGuest(Long taskId) {
+        if (taskId == null) {
+            return null;
+        }
+        return CacheConstants.ERRAND_DETAIL + "guest:" + taskId;
+    }
+
+    private void evictErrandDetailCache(Long taskId, String schoolCode) {
+        if (taskId == null) {
+            return;
+        }
+        String guestKey = buildErrandDetailCacheKeyForGuest(taskId);
+        if (guestKey != null) {
+            redisCache.delete(guestKey);
+        }
+        String schoolKey = buildErrandDetailCacheKeyForSchool(taskId, schoolCode);
+        if (schoolKey != null) {
+            redisCache.delete(schoolKey);
+        }
     }
 
     private void sendErrandSyncAfterCommit(Long taskId, ErrandSyncMessage message, String actionName) {

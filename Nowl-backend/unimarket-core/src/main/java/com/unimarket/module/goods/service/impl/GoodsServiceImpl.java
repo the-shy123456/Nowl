@@ -35,6 +35,7 @@ import com.unimarket.module.school.entity.SchoolInfo;
 import com.unimarket.module.school.mapper.SchoolInfoMapper;
 import com.unimarket.module.user.entity.UserInfo;
 import com.unimarket.module.user.mapper.UserInfoMapper;
+import com.unimarket.security.UserContextHolder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.rocketmq.spring.core.RocketMQTemplate;
@@ -147,20 +148,25 @@ public class GoodsServiceImpl implements GoodsService {
 
     @Override
     public GoodsDetailVO getDetail(Long productId, Long currentUserId) {
-        String cacheKey = GOODS_DETAIL_CACHE_PREFIX + productId;
+        String cacheKey = buildGoodsDetailCacheKey(productId);
         
         // 1. 检查穿透缓存（空标记）
-        Object marker = redisCache.get(cacheKey);
-        if (NULL_MARKER.equals(marker)) {
-            log.warn("拦截到针对已缓存空物品ID的查询: {}", productId);
-            throw new BusinessException("商品不存在");
+        if (cacheKey != null) {
+            Object marker = redisCache.get(cacheKey);
+            if (NULL_MARKER.equals(marker)) {
+                log.warn("拦截到针对已缓存空物品ID的查询: {}", productId);
+                throw new BusinessException("商品不存在");
+            }
         }
 
         // 查询商品信息
         GoodsInfo goodsInfo = goodsInfoMapper.selectById(productId);
         if (goodsInfo == null) {
             // 2. 写入空值缓存，防止穿透，有效期5分钟
-            redisCache.set(cacheKey, NULL_MARKER, 300);
+            if (cacheKey != null) {
+                // 注意：goods_info 是多租户表，缓存 key 必须带 tenant（schoolCode），避免跨校请求把“空标记”写入导致误伤其他学校。
+                redisCache.set(cacheKey, NULL_MARKER, 300);
+            }
             throw new BusinessException("商品不存在");
         }
 
@@ -212,6 +218,22 @@ public class GoodsServiceImpl implements GoodsService {
         }
 
         return vo;
+    }
+
+    private String buildGoodsDetailCacheKey(Long productId) {
+        if (productId == null) {
+            return null;
+        }
+
+        if (UserContextHolder.isGuest()) {
+            return GOODS_DETAIL_CACHE_PREFIX + "guest:" + productId;
+        }
+
+        String schoolCode = UserContextHolder.getSchoolCode();
+        if (StrUtil.isBlank(schoolCode)) {
+            return null;
+        }
+        return GOODS_DETAIL_CACHE_PREFIX + schoolCode.trim() + ":" + productId;
     }
 
     private boolean canAdminViewGoods(Long userId, GoodsInfo goodsInfo) {

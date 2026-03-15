@@ -111,6 +111,16 @@ public class OrderServiceImpl implements OrderService {
                 throw new BusinessException("不能购买自己的商品");
             }
 
+            // 校园隔离：仅允许同学校下单（校区可不同）
+            String buyerSchoolCode = buyer.getSchoolCode();
+            String goodsSchoolCode = goodsInfo.getSchoolCode();
+            if (StrUtil.isBlank(buyerSchoolCode) || StrUtil.isBlank(goodsSchoolCode)) {
+                throw new BusinessException("用户或商品学校信息缺失，暂不可下单");
+            }
+            if (!buyerSchoolCode.trim().equalsIgnoreCase(goodsSchoolCode.trim())) {
+                throw new BusinessException("仅支持同学校范围内下单");
+            }
+
             // 创建订单
             OrderInfo orderInfo = new OrderInfo();
             orderInfo.setOrderNo(generateOrderNo());
