@@ -10,6 +10,7 @@ import com.unimarket.admin.service.impl.support.AdminSchoolInfoSupport;
 import com.unimarket.admin.vo.DisputeVO;
 import com.unimarket.common.enums.DisputeStatus;
 import com.unimarket.common.enums.DisputeTargetType;
+import com.unimarket.common.enums.ErrandStatus;
 import com.unimarket.common.enums.NoticeType;
 import com.unimarket.common.enums.OrderStatus;
 import com.unimarket.common.enums.RefundStatus;
@@ -17,6 +18,8 @@ import com.unimarket.common.enums.TradeStatus;
 import com.unimarket.common.exception.BusinessException;
 import com.unimarket.common.config.RocketMQConfig;
 import com.unimarket.common.mq.GoodsSyncMessage;
+import com.unimarket.module.errand.entity.ErrandTask;
+import com.unimarket.module.errand.mapper.ErrandTaskMapper;
 import com.unimarket.module.goods.entity.GoodsInfo;
 import com.unimarket.module.goods.mapper.GoodsInfoMapper;
 import com.unimarket.common.result.PageQuery;
@@ -41,6 +44,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -51,6 +55,7 @@ public class AdminDisputeDomainService {
 
     private final DisputeRecordMapper disputeRecordMapper;
     private final OrderInfoMapper orderInfoMapper;
+    private final ErrandTaskMapper errandTaskMapper;
     private final UserInfoMapper userInfoMapper;
     private final GoodsInfoMapper goodsInfoMapper;
     private final CreditScoreService creditScoreService;
@@ -101,12 +106,13 @@ public class AdminDisputeDomainService {
         if (StrUtil.isBlank(normalizedResult)) {
             throw new BusinessException("处理结果不能为空");
         }
-
         boolean processing = DisputeStatus.PENDING.getCode().equals(record.getHandleStatus())
                 || DisputeStatus.PROCESSING.getCode().equals(record.getHandleStatus());
         if (!processing) {
             boolean sameStatus = Integer.valueOf(normalizedHandleStatus).equals(record.getHandleStatus());
-            boolean sameResult = StrUtil.equals(normalizedResult, StrUtil.trim(record.getHandleResult()));
+            String existedResult = StrUtil.trim(record.getHandleResult());
+            boolean sameResult = StrUtil.equals(normalizedResult, existedResult)
+                    || StrUtil.equals(extractHandleRemark(existedResult), normalizedResult);
             if (sameStatus && sameResult) {
                 log.info("纠纷重复处理请求已忽略: disputeId={}, status={}", disputeId, normalizedHandleStatus);
                 return;
@@ -116,49 +122,105 @@ public class AdminDisputeDomainService {
 
         boolean resolved = normalizedHandleStatus == resolvedStatus;
 
-        if (resolved
-                && record.getClaimSellerCreditPenalty() != null
-                && record.getClaimSellerCreditPenalty() == 1
-                && deductCreditScore != null
-                && deductCreditScore > 0) {
-            creditScoreService.adjustCreditScore(record.getRelatedId(), -deductCreditScore, "纠纷处理扣分");
+        int actualCreditPenalty = normalizeCreditPenalty(record, resolved, deductCreditScore);
+        if (actualCreditPenalty > 0) {
+            creditScoreService.adjustCreditScore(record.getRelatedId(), -actualCreditPenalty, "纠纷处理扣分");
         }
+
+        BigDecimal actualRefundAmount = BigDecimal.ZERO;
 
         if (DisputeTargetType.ORDER.getCode().equals(record.getTargetType())) {
-            settleOrderAfterDispute(operatorId, record, resolved, refundAmount);
+            actualRefundAmount = settleOrderAfterDispute(operatorId, record, resolved, refundAmount);
+        } else if (DisputeTargetType.ERRAND.getCode().equals(record.getTargetType())) {
+            actualRefundAmount = settleErrandAfterDispute(operatorId, record, resolved, refundAmount);
         }
 
-        record.setHandleResult(normalizedResult);
+        record.setResolvedRefundAmount(hasPositiveAmount(actualRefundAmount) ? actualRefundAmount : null);
+        record.setResolvedCreditPenalty(actualCreditPenalty > 0 ? actualCreditPenalty : null);
+        String finalHandleResult = buildFinalHandleResult(normalizedHandleStatus, normalizedResult, actualCreditPenalty, actualRefundAmount);
+
+        record.setHandleResult(finalHandleResult);
         record.setHandleStatus(normalizedHandleStatus);
+        record.setHandlerId(operatorId);
         record.setHandleTime(LocalDateTime.now());
         disputeRecordMapper.updateById(record);
-        log.info("纠纷处理完成: disputeId={}, status={}, result={}", disputeId, normalizedHandleStatus, normalizedResult);
+        log.info("纠纷处理完成: disputeId={}, status={}, result={}", disputeId, normalizedHandleStatus, finalHandleResult);
 
         // 发送通知给双方
         noticeService.sendNotice(record.getInitiatorId(), "纠纷处理结果",
-                "您发起的纠纷已处理，结果：" + normalizedResult,
+                "您发起的纠纷已处理，结果：" + finalHandleResult,
                 NoticeType.DISPUTE.getCode(),
                 record.getRecordId());
         noticeService.sendNotice(record.getRelatedId(), "纠纷处理结果",
-                "涉及您的纠纷已处理，结果：" + normalizedResult,
+                "涉及您的纠纷已处理，结果：" + finalHandleResult,
                 NoticeType.DISPUTE.getCode(),
                 record.getRecordId());
     }
 
-    private void settleOrderAfterDispute(Long operatorId,
-                                         DisputeRecord record,
-                                         boolean resolved,
-                                         BigDecimal refundAmount) {
+    private String buildFinalHandleResult(Integer handleStatus,
+                                          String result,
+                                          Integer actualCreditPenalty,
+                                          BigDecimal actualRefundAmount) {
+        if (DisputeStatus.REJECTED.getCode().equals(handleStatus)) {
+            return "纠纷已驳回；处理说明：" + result;
+        }
+
+        List<String> actionParts = new ArrayList<>();
+        if (actualRefundAmount != null && actualRefundAmount.compareTo(BigDecimal.ZERO) > 0) {
+            actionParts.add("退款¥" + formatMoney(actualRefundAmount));
+        }
+        if (actualCreditPenalty != null && actualCreditPenalty > 0) {
+            actionParts.add("扣除对方信用分" + actualCreditPenalty + "分");
+        }
+        String summary = actionParts.isEmpty() ? "纠纷已处理" : String.join("，", actionParts);
+        return summary + "；处理说明：" + result;
+    }
+
+    private int normalizeCreditPenalty(DisputeRecord record, boolean resolved, Integer deductCreditScore) {
+        if (!resolved
+                || record.getClaimSellerCreditPenalty() == null
+                || record.getClaimSellerCreditPenalty() != 1
+                || deductCreditScore == null
+                || deductCreditScore <= 0) {
+            return 0;
+        }
+        return deductCreditScore;
+    }
+
+    private String formatMoney(BigDecimal amount) {
+        return amount.stripTrailingZeros().toPlainString();
+    }
+
+    private boolean hasPositiveAmount(BigDecimal amount) {
+        return amount != null && amount.compareTo(BigDecimal.ZERO) > 0;
+    }
+
+    private String extractHandleRemark(String existedResult) {
+        if (StrUtil.isBlank(existedResult)) {
+            return existedResult;
+        }
+        String marker = "处理说明：";
+        int markerIndex = existedResult.indexOf(marker);
+        if (markerIndex < 0) {
+            return existedResult;
+        }
+        return StrUtil.trim(existedResult.substring(markerIndex + marker.length()));
+    }
+
+    private BigDecimal settleOrderAfterDispute(Long operatorId,
+                                               DisputeRecord record,
+                                               boolean resolved,
+                                               BigDecimal refundAmount) {
         OrderInfo order = orderInfoMapper.selectById(record.getContentId());
         if (order == null) {
-            return;
+            return BigDecimal.ZERO;
         }
 
         if (!OrderStatus.PENDING_RECEIVE.getCode().equals(order.getOrderStatus())) {
             // 历史数据可能存在已完成/已取消订单发起纠纷的情况；为避免重复结算，这里仅对待收货订单执行资金结算。
             log.info("订单状态非待收货，跳过纠纷结算: disputeId={}, orderId={}, status={}",
                     record.getRecordId(), order.getOrderId(), order.getOrderStatus());
-            return;
+            return BigDecimal.ZERO;
         }
 
         BigDecimal actualRefund = BigDecimal.ZERO;
@@ -219,6 +281,75 @@ public class AdminDisputeDomainService {
 
         log.info("订单纠纷结算完成: disputeId={}, orderId={}, refund={}, sellerIncome={}",
                 record.getRecordId(), order.getOrderId(), actualRefund, sellerIncome);
+        return actualRefund;
+    }
+
+    private BigDecimal settleErrandAfterDispute(Long operatorId,
+                                                DisputeRecord record,
+                                                boolean resolved,
+                                                BigDecimal refundAmount) {
+        ErrandTask task = errandTaskMapper.selectById(record.getContentId());
+        if (task == null) {
+            return BigDecimal.ZERO;
+        }
+
+        if (ErrandStatus.COMPLETED.getCode().equals(task.getTaskStatus())
+                || ErrandStatus.CANCELLED.getCode().equals(task.getTaskStatus())) {
+            log.info("跑腿任务已是终态，跳过纠纷结算: disputeId={}, taskId={}, status={}",
+                    record.getRecordId(), task.getTaskId(), task.getTaskStatus());
+            return BigDecimal.ZERO;
+        }
+
+        BigDecimal actualRefund = BigDecimal.ZERO;
+        if (resolved
+                && record.getClaimRefund() != null
+                && record.getClaimRefund() == 1
+                && refundAmount != null
+                && refundAmount.compareTo(BigDecimal.ZERO) > 0) {
+            BigDecimal maxAmount = task.getReward();
+            if (record.getClaimRefundAmount() != null && record.getClaimRefundAmount().compareTo(maxAmount) < 0) {
+                maxAmount = record.getClaimRefundAmount();
+            }
+            if (refundAmount.compareTo(maxAmount) > 0) {
+                throw new BusinessException("退款金额不能超过可裁定金额");
+            }
+            actualRefund = refundAmount;
+        }
+
+        if (actualRefund.compareTo(BigDecimal.ZERO) > 0) {
+            UserInfo publisher = userInfoMapper.selectById(task.getPublisherId());
+            if (publisher != null) {
+                publisher.setMoney(publisher.getMoney().add(actualRefund));
+                userInfoMapper.updateById(publisher);
+            }
+        }
+
+        BigDecimal acceptorIncome = task.getReward().subtract(actualRefund);
+        if (acceptorIncome.compareTo(BigDecimal.ZERO) > 0 && task.getAcceptorId() != null) {
+            UserInfo acceptor = userInfoMapper.selectById(task.getAcceptorId());
+            if (acceptor != null) {
+                acceptor.setMoney(acceptor.getMoney().add(acceptorIncome));
+                userInfoMapper.updateById(acceptor);
+            }
+        }
+
+        if (actualRefund.compareTo(task.getReward()) == 0) {
+            task.setTaskStatus(ErrandStatus.CANCELLED.getCode());
+            task.setCancelTime(LocalDateTime.now());
+            if (StrUtil.isBlank(task.getCancelReason())) {
+                task.setCancelReason("纠纷裁定全额退款");
+            }
+        } else {
+            task.setTaskStatus(ErrandStatus.COMPLETED.getCode());
+            if (task.getConfirmTime() == null) {
+                task.setConfirmTime(LocalDateTime.now());
+            }
+        }
+        errandTaskMapper.updateById(task);
+
+        log.info("跑腿纠纷结算完成: disputeId={}, taskId={}, refund={}, acceptorIncome={}",
+                record.getRecordId(), task.getTaskId(), actualRefund, acceptorIncome);
+        return actualRefund;
     }
 
     private void sendGoodsSyncAfterCommit(GoodsSyncMessage message) {
@@ -247,6 +378,7 @@ public class AdminDisputeDomainService {
     public Page<DisputeVO> getDisputeList(Long operatorId,
                                           PageQuery query,
                                           Integer status,
+                                          Integer targetType,
                                           String schoolCode,
                                           String campusCode) {
         List<IamAdminScopeBinding> scopes = scopeSupport.getOperatorScopes(operatorId);
@@ -255,6 +387,9 @@ public class AdminDisputeDomainService {
         LambdaQueryWrapper<DisputeRecord> wrapper = new LambdaQueryWrapper<>();
         if (status != null) {
             wrapper.eq(DisputeRecord::getHandleStatus, status);
+        }
+        if (targetType != null) {
+            wrapper.eq(DisputeRecord::getTargetType, targetType);
         }
         wrapper.eq(StrUtil.isNotBlank(schoolCode), DisputeRecord::getSchoolCode, schoolCode)
                 .eq(StrUtil.isNotBlank(campusCode), DisputeRecord::getCampusCode, campusCode);

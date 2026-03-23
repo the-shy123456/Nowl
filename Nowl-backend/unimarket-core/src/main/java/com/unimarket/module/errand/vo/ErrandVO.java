@@ -180,4 +180,44 @@ public class ErrandVO {
      * 实时经度 (仅详情展示用)
      */
     private BigDecimal currentLongitude;
+
+    /**
+     * 是否存在进行中的纠纷（待处理/处理中）
+     */
+    private Boolean hasActiveDispute;
+
+    /**
+     * 进行中纠纷ID
+     */
+    private Long activeDisputeId;
+
+    /**
+     * 进行中纠纷状态：0-待处理，1-处理中
+     */
+    private Integer activeDisputeStatus;
+
+    /**
+     * 最近一次已处理纠纷ID
+     */
+    private Long latestClosedDisputeId;
+
+    /**
+     * 最近一次已处理纠纷状态：2-已解决，3-已驳回
+     */
+    private Integer latestClosedDisputeStatus;
+
+    /**
+     * 最近一次已处理纠纷结果摘要
+     */
+    private String latestClosedDisputeResult;
+
+    /**
+     * 最近一次已处理纠纷实际退款金额
+     */
+    private BigDecimal latestClosedDisputeRefundAmount;
+
+    /**
+     * 最近一次已处理纠纷实际扣除信用分
+     */
+    private Integer latestClosedDisputeCreditPenalty;
 }

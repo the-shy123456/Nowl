@@ -131,6 +131,21 @@ const getRefundStatus = (order: OrderInfo): number | null => {
   return Number.isFinite(status) ? status : null
 }
 
+const formatAmountText = (value?: number | null) => {
+  const amount = Number(value)
+  if (!Number.isFinite(amount) || amount <= 0) return ''
+  return amount.toString()
+}
+
+const extractHandleRemark = (text?: string) => {
+  const content = String(text || '').trim()
+  if (!content) return ''
+  const marker = '处理说明：'
+  const markerIndex = content.indexOf(marker)
+  if (markerIndex === -1) return ''
+  return content.slice(markerIndex + marker.length).trim()
+}
+
 const isRefundPending = (order: OrderInfo) => getRefundStatus(order) === 1
 
 const formatRefundBadgeText = (order: OrderInfo) => {
@@ -529,11 +544,47 @@ const getActiveDisputeId = (order: OrderInfo) => {
   return Number.isFinite(disputeId) && disputeId > 0 ? disputeId : null
 }
 
+const getLatestClosedDisputeId = (order: OrderInfo) => {
+  const disputeId = Number(order.latestClosedDisputeId)
+  return Number.isFinite(disputeId) && disputeId > 0 ? disputeId : null
+}
+
 const hasActiveDispute = (order: OrderInfo) => {
   if (getActiveDisputeId(order) === null) return false
   const status = Number(order.activeDisputeStatus)
   if (!Number.isFinite(status)) return false
   return status === DisputeStatus.PENDING || status === DisputeStatus.PROCESSING
+}
+
+const hasLatestClosedDispute = (order: OrderInfo) => {
+  if (getLatestClosedDisputeId(order) === null) return false
+  const status = Number(order.latestClosedDisputeStatus)
+  if (!Number.isFinite(status)) return false
+  return status === DisputeStatus.RESOLVED || status === DisputeStatus.REJECTED
+}
+
+const latestClosedDisputeText = (order: OrderInfo) => {
+  const parts: string[] = []
+  const refundText = formatAmountText(order.latestClosedDisputeRefundAmount)
+  if (refundText) {
+    parts.push(`退款¥${refundText}`)
+  }
+  const creditPenalty = Number(order.latestClosedDisputeCreditPenalty)
+  if (Number.isFinite(creditPenalty) && creditPenalty > 0) {
+    parts.push(`扣除对方信用分${creditPenalty}分`)
+  }
+  const remark = extractHandleRemark(order.latestClosedDisputeResult)
+  if (remark) {
+    parts.push(`处理说明：${remark}`)
+  }
+  if (parts.length > 0) {
+    return parts.join('，')
+  }
+  return String(order.latestClosedDisputeResult || '').trim()
+}
+
+const getDisplayDisputeId = (order: OrderInfo) => {
+  return getActiveDisputeId(order) ?? getLatestClosedDisputeId(order)
 }
 
 const canRaiseDispute = (order: OrderInfo) =>
@@ -549,7 +600,7 @@ const canCreateReview = (order: OrderInfo) =>
   && !hasActiveDispute(order)
 
 const openDisputeDetail = (order: OrderInfo) => {
-  const disputeId = getActiveDisputeId(order)
+  const disputeId = getDisplayDisputeId(order)
   if (disputeId === null) {
     router.push('/dispute/list')
     return
@@ -680,7 +731,7 @@ onMounted(() => {
 
               <div class="mt-2 flex flex-wrap items-center gap-2">
                 <span
-                  v-if="getRefundMeta(order.refundStatus)"
+                  v-if="getRefundMeta(order.refundStatus) && !hasLatestClosedDispute(order)"
                   class="text-[11px] rounded-full px-2.5 py-1"
                   :class="getRefundMeta(order.refundStatus)?.color"
                 >
@@ -708,7 +759,14 @@ onMounted(() => {
                   纠纷处理中
                 </span>
               </div>
-              <p v-if="order.refundProcessRemark" class="mt-2 text-xs text-slate-400">
+              <button
+                v-if="!hasActiveDispute(order) && hasLatestClosedDispute(order) && latestClosedDisputeText(order)"
+                class="mt-2 text-left text-xs text-red-600 hover:text-red-700 line-clamp-2"
+                @click="openDisputeDetail(order)"
+              >
+                纠纷：{{ latestClosedDisputeText(order) }}
+              </button>
+              <p v-if="order.refundProcessRemark && !hasLatestClosedDispute(order)" class="mt-2 text-xs text-slate-400">
                 处理说明：{{ order.refundProcessRemark }}
               </p>
             </div>
@@ -783,9 +841,12 @@ onMounted(() => {
             </button>
 
             <button
-              v-if="hasActiveDispute(order)"
+              v-if="hasActiveDispute(order) || hasLatestClosedDispute(order)"
               @click="openDisputeDetail(order)"
-              class="um-btn px-3.5 py-2 text-sm bg-orange-100 text-orange-700 hover:bg-orange-200"
+              class="um-btn px-3.5 py-2 text-sm"
+              :class="hasActiveDispute(order)
+                ? 'bg-orange-100 text-orange-700 hover:bg-orange-200'
+                : 'bg-red-50 text-red-600 hover:bg-red-100'"
             >
               查看纠纷
             </button>

@@ -135,15 +135,19 @@ public class DisputeServiceImpl implements DisputeService {
             if (task == null) {
                 throw new BusinessException("跑腿任务不存在");
             }
-            // 验证用户是否是任务参与方
-            if (!userId.equals(task.getPublisherId()) && !userId.equals(task.getAcceptorId())) {
-                throw new BusinessException("您无权对此任务发起纠纷");
+            // 跑腿纠纷由出资的发布者发起，避免双方重复进入资金裁定流程
+            if (!userId.equals(task.getPublisherId())) {
+                throw new BusinessException("仅任务发布者可发起跑腿纠纷");
             }
-            // 确定被投诉方
-            relatedId = userId.equals(task.getPublisherId()) ? task.getAcceptorId() : task.getPublisherId();
-            if (relatedId == null) {
+            if (task.getAcceptorId() == null) {
                 throw new BusinessException("该任务尚未被接单，无法发起纠纷");
             }
+            if (!ErrandStatus.IN_PROGRESS.getCode().equals(task.getTaskStatus())
+                    && !ErrandStatus.PENDING_CONFIRM.getCode().equals(task.getTaskStatus())) {
+                throw new BusinessException("当前跑腿状态不可发起纠纷，仅支持进行中或待确认任务");
+            }
+            // 确定被投诉方
+            relatedId = task.getAcceptorId();
             contentTitle = task.getTitle();
             schoolCode = task.getSchoolCode();
             campusCode = task.getCampusCode();

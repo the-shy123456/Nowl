@@ -187,6 +187,11 @@ export interface OrderInfo {
   hasActiveDispute?: boolean
   activeDisputeId?: number
   activeDisputeStatus?: number
+  latestClosedDisputeId?: number
+  latestClosedDisputeStatus?: number
+  latestClosedDisputeResult?: string
+  latestClosedDisputeRefundAmount?: number
+  latestClosedDisputeCreditPenalty?: number
   createTime: string
   updateTime: string
   // 扩展字段
@@ -257,6 +262,14 @@ export interface ErrandTask {
   statusText?: string
   currentLatitude?: number
   currentLongitude?: number
+  hasActiveDispute?: boolean
+  activeDisputeId?: number
+  activeDisputeStatus?: number
+  latestClosedDisputeId?: number
+  latestClosedDisputeStatus?: number
+  latestClosedDisputeResult?: string
+  latestClosedDisputeRefundAmount?: number
+  latestClosedDisputeCreditPenalty?: number
 }
 
 // 搜索结果VO

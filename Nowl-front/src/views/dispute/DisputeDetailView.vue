@@ -136,6 +136,22 @@ const claimItems = computed(() => {
   ]
 })
 
+const resolvedItems = computed(() => {
+  if (!dispute.value) return []
+  const refundAmount = Number(dispute.value.resolvedRefundAmount ?? NaN)
+  const creditPenalty = Number(dispute.value.resolvedCreditPenalty ?? NaN)
+  return [
+    {
+      label: '实际退款',
+      value: Number.isFinite(refundAmount) && refundAmount > 0 ? `¥${refundAmount}` : '--',
+    },
+    {
+      label: '实际扣分',
+      value: Number.isFinite(creditPenalty) && creditPenalty > 0 ? `${creditPenalty}分` : '--',
+    },
+  ]
+})
+
 const fetchDetail = async () => {
   if (!Number.isFinite(recordId.value) || recordId.value <= 0) {
     ElMessage.error('纠纷编号无效')
@@ -490,6 +506,12 @@ onUnmounted(() => {
             <CheckCircle class="w-4 h-4" />
             处理结果
           </h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm mb-3">
+            <div v-for="item in resolvedItems" :key="item.label" class="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
+              <p class="text-xs text-slate-500">{{ item.label }}</p>
+              <p class="text-slate-700 mt-1 font-medium">{{ item.value }}</p>
+            </div>
+          </div>
           <p class="text-slate-600 whitespace-pre-wrap leading-7">{{ dispute.handleResult }}</p>
           <p class="text-xs text-slate-400 mt-2">处理时间：{{ formatTime(dispute.handleTime) }}</p>
         </section>

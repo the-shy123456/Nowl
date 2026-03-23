@@ -35,6 +35,11 @@ public class SchoolTenantLineHandler implements TenantLineHandler {
             "errand_task"
     ));
 
+    @Override
+    public String getTenantIdColumn() {
+        return "school_code";
+    }
+
     /**
      * 需要跳过租户隔离的维护接口（后台已做IAM范围控制）
      */
@@ -56,10 +61,6 @@ public class SchoolTenantLineHandler implements TenantLineHandler {
         return new StringValue(schoolCode);
     }
 
-    @Override
-    public String getTenantIdColumn() {
-        return "school_code";
-    }
 
     @Override
     public boolean ignoreTable(String tableName) {

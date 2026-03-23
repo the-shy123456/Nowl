@@ -63,7 +63,6 @@ public class RiskControlServiceImpl implements RiskControlService {
         long startNs = System.nanoTime();
         RiskContext normalized = normalizeContext(context);
         RiskMode mode = riskModeService.getMode();
-
         if (mode == RiskMode.OFF) {
             recordMetrics(normalized.getEventType(), RiskAction.ALLOW, RiskLevel.LOW, startNs);
             return RiskDecisionResult.builder()
@@ -73,13 +72,11 @@ public class RiskControlServiceImpl implements RiskControlService {
                     .reason("风控已关闭")
                     .build();
         }
-
         LocalDateTime eventTime = LocalDateTime.now();
         RiskEvent event = buildRiskEvent(normalized, eventTime);
         if (mode == RiskMode.FULL) {
             riskRealtimeStore.recordEvaluation(normalized, event.getTraceId(), eventTime);
         }
-
         DecisionDraft decisionDraft = resolveDecision(normalized, mode);
         RiskDecision decision = buildRiskDecision(event.getEventId(), decisionDraft);
         RiskCase riskCase = decisionDraft.action == RiskAction.REVIEW ? buildRiskCase(event, decision) : null;
@@ -88,7 +85,6 @@ public class RiskControlServiceImpl implements RiskControlService {
                 .decision(decision)
                 .riskCase(riskCase)
                 .build());
-
         recordMetrics(normalized.getEventType(), decisionDraft.action, decisionDraft.riskLevel, startNs);
         return RiskDecisionResult.builder()
                 .eventId(event.getEventId())

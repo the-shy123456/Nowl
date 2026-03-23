@@ -97,6 +97,7 @@ public interface AdminService {
     Page<DisputeVO> getDisputeList(Long operatorId,
                                    PageQuery query,
                                    Integer status,
+                                   Integer targetType,
                                    String schoolCode,
                                    String campusCode);
 

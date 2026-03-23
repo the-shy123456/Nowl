@@ -77,16 +77,13 @@ public class SearchServiceImpl implements SearchService {
 
         return new PageResult<>(searchHits.getTotalHits(), resultList);
     }
-
     /**
      * 构建搜索查询
      */
     private NativeQuery buildSearchQuery(SearchRequestDTO request) {
         NativeQueryBuilder queryBuilder = NativeQuery.builder();
-
         // 构建布尔查询
         BoolQuery.Builder boolQuery = new BoolQuery.Builder();
-
         // 关键词搜索
         if (StrUtil.isNotBlank(request.getKeyword())) {
             // 多字段匹配：标题、标题拼音、描述、分类名
@@ -98,7 +95,6 @@ public class SearchServiceImpl implements SearchService {
                 )
             ));
         }
-
         // 过滤条件
         // 分类筛选：支持单个分类ID或多个分类ID
         if (request.getCategoryIds() != null && !request.getCategoryIds().isEmpty()) {
@@ -115,21 +111,18 @@ public class SearchServiceImpl implements SearchService {
                 .term(t -> t.field("categoryId").value(request.getCategoryId()))
             ));
         }
-
         // 学校筛选
         if (StrUtil.isNotBlank(request.getSchoolCode())) {
             boolQuery.filter(Query.of(q -> q
                 .term(t -> t.field("schoolCode").value(request.getSchoolCode()))
             ));
         }
-
         // 校区筛选
         if (StrUtil.isNotBlank(request.getCampusCode())) {
             boolQuery.filter(Query.of(q -> q
                 .term(t -> t.field("campusCode").value(request.getCampusCode()))
             ));
         }
-
         // 价格区间
         if (request.getMinPrice() != null || request.getMaxPrice() != null) {
             boolQuery.filter(Query.of(q -> q
@@ -145,13 +138,11 @@ public class SearchServiceImpl implements SearchService {
                 })
             ));
         }
-
         // 交易状态（默认只查在售）
         Integer tradeStatus = request.getTradeStatus() != null ? request.getTradeStatus() : 0;
         boolQuery.filter(Query.of(q -> q
             .term(t -> t.field("tradeStatus").value(tradeStatus))
         ));
-
         // 审核状态（只查已通过）
         boolQuery.filter(Query.of(q -> q
             .terms(t -> t
@@ -162,25 +153,20 @@ public class SearchServiceImpl implements SearchService {
                 )))
             )
         ));
-
         // 卖家筛选
         if (request.getSellerId() != null) {
             boolQuery.filter(Query.of(q -> q
                 .term(t -> t.field("sellerId").value(request.getSellerId()))
             ));
         }
-
         queryBuilder.withQuery(Query.of(q -> q.bool(boolQuery.build())));
-
         // 排序
         applySorting(queryBuilder, request.getSortType(), StrUtil.isNotBlank(request.getKeyword()));
-
         // 分页
         queryBuilder.withPageable(PageRequest.of(
             request.getPageNum() - 1,
             request.getPageSize()
         ));
-
         // 高亮
         if (StrUtil.isNotBlank(request.getKeyword())) {
             queryBuilder.withHighlightQuery(new HighlightQuery(
@@ -194,7 +180,6 @@ public class SearchServiceImpl implements SearchService {
                 GoodsDocument.class
             ));
         }
-
         return queryBuilder.build();
     }
 

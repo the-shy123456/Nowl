@@ -8,21 +8,21 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.messages.Media;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.function.FunctionCallback;
 import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
-import org.springframework.util.MimeType;
-import org.springframework.util.MimeTypeUtils;
+import org.springframework.web.client.RestClient;
 
-import java.net.URI;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -34,6 +34,16 @@ import java.util.Objects;
 public class AiChatServiceImpl implements AiChatService {
 
     private final ChatClient chatClient;
+    private final RestClient.Builder restClientBuilder;
+
+    @Value("${spring.ai.openai.api-key}")
+    private String apiKey;
+
+    @Value("${spring.ai.openai.base-url}")
+    private String baseUrl;
+
+    @Value("${spring.ai.openai.chat.options.model}")
+    private String model;
 
     private static final String SYSTEM_PROMPT_TEXT = """
             你叫"Nowl AI"，是UniMarket校园二手交易平台的智能助手。
@@ -48,21 +58,21 @@ public class AiChatServiceImpl implements AiChatService {
     @Override
     public String chat(String message, String imageUrl, String historyContext) {
         try {
-            List<Message> historyMessages = parseHistoryContext(historyContext);
-
-            UserMessage userMessage;
+            // Spring AI 0.8.1 的 OpenAiChatClient 在请求转换时不会把 Media 带到最终请求里，
+            // 图片会在框架层被静默丢弃，因此这里对带图对话单独走兼容 OpenAI 的多模态请求。
             if (imageUrl != null && !imageUrl.isEmpty()) {
                 log.info("Nowl AI收到图片消息: {}", imageUrl);
-                MimeType mimeType = resolveImageMimeType(imageUrl);
-                userMessage = new UserMessage(message, List.of(new Media(mimeType, new URI(imageUrl))));
-            } else {
-                userMessage = new UserMessage(message);
+                String response = callMultimodalChat(message, imageUrl, historyContext);
+                log.info("Nowl AI回复: {}", response);
+                return response;
             }
+
+            List<Message> historyMessages = parseHistoryContext(historyContext);
 
             List<Message> promptMessages = new ArrayList<>();
             promptMessages.add(new SystemMessage(SYSTEM_PROMPT_TEXT));
             promptMessages.addAll(historyMessages);
-            promptMessages.add(userMessage);
+            promptMessages.add(new UserMessage(message));
 
             log.info("Nowl AI正在思考... (历史记录数: {})", historyMessages.size());
             String response = chatClient.call(new Prompt(promptMessages)).getResult().getOutput().getContent();
@@ -110,37 +120,126 @@ public class AiChatServiceImpl implements AiChatService {
         }
     }
 
-    private MimeType resolveImageMimeType(String imageUrl) {
-        if (imageUrl == null || imageUrl.isBlank()) {
-            return MimeTypeUtils.IMAGE_JPEG;
+    private String callMultimodalChat(String message, String imageUrl, String historyContext) {
+        RestClient restClient = restClientBuilder
+                .baseUrl(resolveOpenAiApiBaseUrl())
+                .defaultHeader("Authorization", "Bearer " + apiKey)
+                .build();
+
+        List<Map<String, Object>> messages = new ArrayList<>();
+        messages.add(Map.of(
+                "role", "system",
+                "content", SYSTEM_PROMPT_TEXT
+        ));
+        messages.addAll(parseHistoryContextForOpenAi(historyContext));
+
+        List<Map<String, Object>> userContent = new ArrayList<>();
+        userContent.add(Map.of(
+                "type", "text",
+                "text", Objects.toString(message, "请看这张图")
+        ));
+        userContent.add(Map.of(
+                "type", "image_url",
+                "image_url", Map.of("url", imageUrl)
+        ));
+
+        Map<String, Object> userMessage = new LinkedHashMap<>();
+        userMessage.put("role", "user");
+        userMessage.put("content", userContent);
+        messages.add(userMessage);
+
+        Map<String, Object> requestBody = new LinkedHashMap<>();
+        requestBody.put("model", model);
+        requestBody.put("messages", messages);
+
+        String responseBody = restClient.post()
+                .uri("/chat/completions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(requestBody)
+                .retrieve()
+                .body(String.class);
+
+        return extractAssistantContent(responseBody);
+    }
+
+    private List<Map<String, Object>> parseHistoryContextForOpenAi(String historyContext) {
+        List<Map<String, Object>> messages = new ArrayList<>();
+        if (historyContext == null || historyContext.isEmpty()) {
+            return messages;
+        }
+        try {
+            JSONArray array = JSONUtil.parseArray(historyContext);
+            for (int i = 0; i < array.size(); i++) {
+                JSONObject obj = array.getJSONObject(i);
+                String role = obj.getStr("role");
+                String content = Objects.toString(obj.getStr("content"), "");
+                messages.add(Map.of(
+                        "role", "model".equals(role) ? "assistant" : "user",
+                        "content", content
+                ));
+            }
+        } catch (Exception e) {
+            log.warn("解析多模态聊天历史失败: {}", e.getMessage());
+        }
+        return messages;
+    }
+
+    private String extractAssistantContent(String responseBody) {
+        if (responseBody == null || responseBody.isBlank()) {
+            return "抱歉，Nowl AI现在有点忙，请稍后再试~";
         }
 
-        String normalized = imageUrl.toLowerCase(Locale.ROOT);
-        int queryIndex = normalized.indexOf('?');
-        if (queryIndex >= 0) {
-            normalized = normalized.substring(0, queryIndex);
-        }
-        int fragmentIndex = normalized.indexOf('#');
-        if (fragmentIndex >= 0) {
-            normalized = normalized.substring(0, fragmentIndex);
+        JSONObject response = JSONUtil.parseObj(responseBody);
+        JSONArray choices = response.getJSONArray("choices");
+        if (choices == null || choices.isEmpty()) {
+            log.warn("多模态聊天未返回 choices: {}", responseBody);
+            return "抱歉，Nowl AI现在有点忙，请稍后再试~";
         }
 
-        if (normalized.endsWith(".png")) {
-            return MimeTypeUtils.IMAGE_PNG;
+        JSONObject firstChoice = choices.getJSONObject(0);
+        JSONObject message = firstChoice == null ? null : firstChoice.getJSONObject("message");
+        if (message == null) {
+            log.warn("多模态聊天未返回 message: {}", responseBody);
+            return "抱歉，Nowl AI现在有点忙，请稍后再试~";
         }
-        if (normalized.endsWith(".jpg") || normalized.endsWith(".jpeg")) {
-            return MimeTypeUtils.IMAGE_JPEG;
+
+        Object content = message.get("content");
+        if (content instanceof String text && !text.isBlank()) {
+            return text;
         }
-        if (normalized.endsWith(".gif")) {
-            return MimeTypeUtils.IMAGE_GIF;
+        if (content instanceof JSONArray contentArray) {
+            StringBuilder builder = new StringBuilder();
+            for (int i = 0; i < contentArray.size(); i++) {
+                JSONObject part = contentArray.getJSONObject(i);
+                if (part == null) {
+                    continue;
+                }
+                String text = part.getStr("text");
+                if (text != null && !text.isBlank()) {
+                    if (builder.length() > 0) {
+                        builder.append('\n');
+                    }
+                    builder.append(text);
+                }
+            }
+            if (builder.length() > 0) {
+                return builder.toString();
+            }
         }
-        if (normalized.endsWith(".webp")) {
-            return MimeTypeUtils.parseMimeType("image/webp");
+
+        log.warn("多模态聊天返回内容无法解析: {}", responseBody);
+        return "抱歉，我没有成功读取到图片内容，请稍后再试~";
+    }
+
+    private String resolveOpenAiApiBaseUrl() {
+        String normalized = Objects.toString(baseUrl, "").trim();
+        while (normalized.endsWith("/")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
         }
-        if (normalized.endsWith(".bmp")) {
-            return MimeTypeUtils.parseMimeType("image/bmp");
+        if (!normalized.endsWith("/v1")) {
+            normalized = normalized + "/v1";
         }
-        return MimeTypeUtils.IMAGE_JPEG;
+        return normalized;
     }
 
     /**

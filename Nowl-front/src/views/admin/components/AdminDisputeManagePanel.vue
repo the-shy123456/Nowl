@@ -11,6 +11,7 @@ const props = defineProps<{
   filterSchoolCode: string
   filterCampusCode: string
   disputeStatusFilter: number | '' | undefined
+  disputeTargetTypeFilter: number | '' | undefined
   canSelectSchool: boolean
   canSelectCampus: boolean
   isCampusAdmin: boolean
@@ -26,6 +27,7 @@ const emit = defineEmits<{
   (e: 'update:filterSchoolCode', value: string): void
   (e: 'update:filterCampusCode', value: string): void
   (e: 'update:disputeStatusFilter', value: number | '' | undefined): void
+  (e: 'update:disputeTargetTypeFilter', value: number | '' | undefined): void
   (e: 'school-change'): void
   (e: 'campus-change'): void
   (e: 'search'): void
@@ -50,12 +52,22 @@ const disputeStatusModel = computed({
   set: (value: number | '' | undefined) => emit('update:disputeStatusFilter', value),
 })
 
+const disputeTargetTypeModel = computed({
+  get: () => props.disputeTargetTypeFilter,
+  set: (value: number | '' | undefined) => emit('update:disputeTargetTypeFilter', value),
+})
+
 const disputeStatusMap: Record<number, { text: string; color: string; bg: string }> = {
   0: { text: '待处理', color: 'text-amber-600', bg: 'bg-amber-50' },
   1: { text: '处理中', color: 'text-blue-600', bg: 'bg-blue-50' },
   2: { text: '已解决', color: 'text-emerald-600', bg: 'bg-emerald-50' },
   3: { text: '已驳回', color: 'text-red-600', bg: 'bg-red-50' },
   4: { text: '已撤回', color: 'text-slate-500', bg: 'bg-slate-100' },
+}
+
+const disputeTargetTypeMap: Record<number, { text: string; color: string; bg: string }> = {
+  0: { text: '商品纠纷', color: 'text-blue-600', bg: 'bg-blue-50' },
+  1: { text: '跑腿纠纷', color: 'text-orange-700', bg: 'bg-orange-50' },
 }
 
 const canHandleDispute = (status?: number) => status === 0 || status === 1
@@ -96,6 +108,10 @@ const formatSchoolCampus = (schoolName?: string, schoolCode?: string, campusName
         <el-option :value="2" label="已解决" />
         <el-option :value="3" label="已驳回" />
       </el-select>
+      <el-select v-model="disputeTargetTypeModel" @change="emit('search')" placeholder="纠纷类型" class="w-44" clearable>
+        <el-option :value="0" label="商品纠纷" />
+        <el-option :value="1" label="跑腿纠纷" />
+      </el-select>
       <button @click="emit('search')" class="px-6 py-2.5 bg-gradient-to-r from-warm-500 to-warm-600 text-white rounded-xl text-sm font-bold hover:shadow-lg hover:shadow-warm-200 transition-all">
         筛选
       </button>
@@ -114,7 +130,8 @@ const formatSchoolCampus = (schoolName?: string, schoolCode?: string, campusName
             <th class="text-left py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-wider">纠纷ID</th>
             <th class="text-left py-4 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">发起人</th>
             <th class="text-left py-4 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">被投诉方</th>
-            <th class="text-left py-4 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">订单号</th>
+            <th class="text-left py-4 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">类型</th>
+            <th class="text-left py-4 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">关联对象</th>
             <th class="text-left py-4 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">学校/校区</th>
             <th class="text-left py-4 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">纠纷内容</th>
             <th class="text-left py-4 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">状态</th>
@@ -138,7 +155,16 @@ const formatSchoolCampus = (schoolName?: string, schoolCode?: string, campusName
               </div>
             </td>
             <td class="py-4 px-4">
+              <span
+                class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold"
+                :class="[disputeTargetTypeMap[item.targetType]?.bg, disputeTargetTypeMap[item.targetType]?.color]"
+              >
+                {{ disputeTargetTypeMap[item.targetType]?.text || '未知类型' }}
+              </span>
+            </td>
+            <td class="py-4 px-4">
               <code v-if="item.orderNo" class="text-xs text-warm-700 bg-warm-100 px-2 py-1 rounded">{{ item.orderNo }}</code>
+              <code v-else-if="item.targetType === 1" class="text-xs text-orange-700 bg-orange-100 px-2 py-1 rounded">跑腿#{{ item.contentId }}</code>
               <span v-else class="text-warm-300">-</span>
             </td>
             <td class="py-4 px-4 text-sm text-slate-600">

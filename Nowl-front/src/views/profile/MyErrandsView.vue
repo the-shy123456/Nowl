@@ -6,6 +6,7 @@ import {
   Truck,
   Edit,
   Star,
+  AlertTriangle,
   CheckCircle,
   Clock,
   ChevronRight,
@@ -15,7 +16,7 @@ import { getMyPublishedErrands, getMyAcceptedErrands } from '@/api/modules/erran
 import { hasReviewed } from '@/api/modules/review'
 import type { ErrandTask } from '@/types'
 import { ErrandStatusMap } from '@/constants/statusMaps'
-import { PAGE_CONSTANTS, ErrandStatus, ReviewStatus } from '@/constants'
+import { DisputeStatus, PAGE_CONSTANTS, ErrandStatus, ReviewStatus } from '@/constants'
 import dayjs from 'dayjs'
 import SubPageShell from '@/components/SubPageShell.vue'
 import { usePaginatedList } from '@/composables/usePaginatedList'
@@ -129,6 +130,21 @@ const getStatusInfo = (status: number) => {
   return ErrandStatusMap[status] || { text: '未知', color: 'bg-gray-100 text-gray-500' }
 }
 
+const formatAmountText = (value?: number | null) => {
+  const amount = Number(value)
+  if (!Number.isFinite(amount) || amount <= 0) return ''
+  return amount.toString()
+}
+
+const extractHandleRemark = (text?: string) => {
+  const content = String(text || '').trim()
+  if (!content) return ''
+  const marker = '处理说明：'
+  const markerIndex = content.indexOf(marker)
+  if (markerIndex === -1) return ''
+  return content.slice(markerIndex + marker.length).trim()
+}
+
 const getReviewStatus = (task: ErrandTask): number | null => {
   const status = Number(task.reviewStatus)
   if (!Number.isFinite(status)) return null
@@ -166,6 +182,9 @@ const getTaskStatusInfo = (task: ErrandTask) => {
 }
 
 const getTaskHintClass = (task: ErrandTask) => {
+  if (!hasActiveDispute(task) && hasLatestClosedDispute(task)) {
+    return 'bg-red-50 text-red-600'
+  }
   if (task.taskStatus === ErrandStatus.CANCELLED) {
     return 'bg-red-50 text-red-600'
   }
@@ -240,6 +259,9 @@ watch(
 )
 
 const quickHint = (task: ErrandTask) => {
+  if (!hasActiveDispute(task) && hasLatestClosedDispute(task) && latestClosedDisputeText(task)) {
+    return `纠纷：${latestClosedDisputeText(task)}`
+  }
   if (task.taskStatus === ErrandStatus.CANCELLED) {
     return `任务已取消${task.cancelReason ? `：${task.cancelReason}` : ''}`
   }
@@ -276,10 +298,75 @@ const canCreateReview = (task: ErrandTask) => {
     && !isReviewBlocked(task)
 }
 
+const getActiveDisputeId = (task: ErrandTask) => {
+  const disputeId = Number(task.activeDisputeId)
+  return Number.isFinite(disputeId) && disputeId > 0 ? disputeId : null
+}
+
+const getLatestClosedDisputeId = (task: ErrandTask) => {
+  const disputeId = Number(task.latestClosedDisputeId)
+  return Number.isFinite(disputeId) && disputeId > 0 ? disputeId : null
+}
+
+const hasActiveDispute = (task: ErrandTask) => {
+  if (getActiveDisputeId(task) === null) return false
+  const status = Number(task.activeDisputeStatus)
+  if (!Number.isFinite(status)) return false
+  return status === DisputeStatus.PENDING || status === DisputeStatus.PROCESSING
+}
+
+const hasLatestClosedDispute = (task: ErrandTask) => {
+  if (getLatestClosedDisputeId(task) === null) return false
+  const status = Number(task.latestClosedDisputeStatus)
+  if (!Number.isFinite(status)) return false
+  return status === DisputeStatus.RESOLVED || status === DisputeStatus.REJECTED
+}
+
+const latestClosedDisputeText = (task: ErrandTask) => {
+  const parts: string[] = []
+  const refundText = formatAmountText(task.latestClosedDisputeRefundAmount)
+  if (refundText) {
+    parts.push(`退款¥${refundText}`)
+  }
+  const creditPenalty = Number(task.latestClosedDisputeCreditPenalty)
+  if (Number.isFinite(creditPenalty) && creditPenalty > 0) {
+    parts.push(`扣除对方信用分${creditPenalty}分`)
+  }
+  const remark = extractHandleRemark(task.latestClosedDisputeResult)
+  if (remark) {
+    parts.push(`处理说明：${remark}`)
+  }
+  if (parts.length > 0) {
+    return parts.join('，')
+  }
+  return String(task.latestClosedDisputeResult || '').trim()
+}
+
+const canRaiseDispute = (task: ErrandTask) => {
+  return activeTab.value === 'published'
+    && (task.taskStatus === ErrandStatus.IN_PROGRESS || task.taskStatus === ErrandStatus.PENDING_CONFIRM)
+    && Number(task.acceptorId || 0) > 0
+    && !hasActiveDispute(task)
+}
+
 const goToReview = (task: ErrandTask) => {
   if (!canCreateReview(task)) return
   const reviewedId = getReviewTargetId(task)
   router.push(`/review/create?type=1&id=${task.taskId}&reviewedId=${reviewedId}`)
+}
+
+const goToDispute = (task: ErrandTask) => {
+  if (!canRaiseDispute(task)) return
+  router.push(`/dispute/create?type=1&id=${task.taskId}`)
+}
+
+const openDisputeDetail = (task: ErrandTask) => {
+  const disputeId = getActiveDisputeId(task) ?? getLatestClosedDisputeId(task)
+  if (disputeId === null) {
+    router.push('/dispute/list')
+    return
+  }
+  router.push(`/dispute/${disputeId}`)
 }
 
 useAutoRefreshOnVisible({
@@ -407,6 +494,27 @@ onMounted(() => {
               <CheckCircle :size="12" />
               已评价
             </span>
+
+            <button
+              v-if="canRaiseDispute(task)"
+              @click="goToDispute(task)"
+              class="um-btn px-3 py-1.5 text-xs bg-orange-50 text-orange-700 hover:bg-orange-100 inline-flex items-center gap-1"
+            >
+              <AlertTriangle :size="12" />
+              发起纠纷
+            </button>
+
+            <button
+              v-if="hasActiveDispute(task) || hasLatestClosedDispute(task)"
+              @click="openDisputeDetail(task)"
+              class="um-btn px-3 py-1.5 text-xs inline-flex items-center gap-1"
+              :class="hasActiveDispute(task)
+                ? 'bg-orange-100 text-orange-700 hover:bg-orange-200'
+                : 'bg-red-50 text-red-600 hover:bg-red-100'"
+            >
+              <AlertTriangle :size="12" />
+              查看纠纷
+            </button>
 
             <button
               class="ml-auto um-btn px-3 py-1.5 text-xs bg-slate-100 text-slate-600 hover:bg-slate-200 inline-flex items-center gap-1"

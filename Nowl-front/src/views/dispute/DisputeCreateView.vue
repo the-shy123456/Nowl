@@ -9,7 +9,7 @@ import { uploadFile } from '@/api/modules/file'
 import { ElMessage } from '@/utils/feedback'
 import { navigateBack } from '@/utils/navigation'
 import type { OrderInfo, ErrandTask } from '@/types'
-import { DisputeStatus, OrderStatus } from '@/constants'
+import { DisputeStatus, ErrandStatus, OrderStatus } from '@/constants'
 import { useUserStore } from '@/stores/user'
 import SubPageShell from '@/components/SubPageShell.vue'
 
@@ -53,6 +53,10 @@ const maxRefundAmount = computed(() => {
     : Number(errandInfo.value?.reward || 0)
 })
 
+const creditClaimLabel = computed(() => {
+  return targetType.value === 0 ? '申请扣除卖家信用分' : '申请扣除跑腿员信用分'
+})
+
 const hasTargetContent = computed(() => {
   return targetType.value === 0 ? Boolean(orderInfo.value) : Boolean(errandInfo.value)
 })
@@ -79,12 +83,12 @@ const isOrderEligibleForDispute = computed(() => {
     && !hasOrderActiveDispute(order)
 })
 
-const isErrandParticipant = computed(() => {
+const isErrandPublisher = computed(() => {
   if (targetType.value !== 1) return true
   if (!errandInfo.value) return false
   const userId = userStore.userInfo?.userId
   if (!Number.isFinite(userId) || Number(userId) <= 0) return false
-  return userId === errandInfo.value.publisherId || userId === errandInfo.value.acceptorId
+  return userId === errandInfo.value.publisherId
 })
 
 const hasErrandAcceptor = computed(() => {
@@ -93,9 +97,27 @@ const hasErrandAcceptor = computed(() => {
   return Number.isFinite(acceptorId) && acceptorId > 0
 })
 
+const hasErrandActiveDispute = computed(() => {
+  if (targetType.value !== 1) return false
+  const disputeId = Number(errandInfo.value?.activeDisputeId)
+  if (!Number.isFinite(disputeId) || disputeId <= 0) return false
+  const status = Number(errandInfo.value?.activeDisputeStatus)
+  return status === DisputeStatus.PENDING || status === DisputeStatus.PROCESSING
+})
+
+const isErrandDisputeWindowOpen = computed(() => {
+  if (targetType.value !== 1) return true
+  const status = Number(errandInfo.value?.taskStatus)
+  return status === ErrandStatus.IN_PROGRESS || status === ErrandStatus.PENDING_CONFIRM
+})
+
 const isErrandEligibleForDispute = computed(() => {
   if (targetType.value !== 1) return true
-  return Boolean(errandInfo.value) && isErrandParticipant.value && hasErrandAcceptor.value
+  return Boolean(errandInfo.value)
+    && isErrandPublisher.value
+    && hasErrandAcceptor.value
+    && isErrandDisputeWindowOpen.value
+    && !hasErrandActiveDispute.value
 })
 
 const isDisputeEligible = computed(() =>
@@ -106,7 +128,7 @@ const disputeEligibilityHint = computed(() => {
   if (targetType.value === 0) {
     return '当前订单暂不满足纠纷条件（需待确认收货，且不能退款处理中或纠纷处理中）。'
   }
-  return '当前跑腿暂不满足纠纷条件（需为任务参与方，且任务已被接单）。'
+  return '当前跑腿暂不满足纠纷条件（仅发布者可发起，且任务需已被接单、处于进行中或待确认状态，并且不能已有进行中的纠纷）。'
 })
 
 const canSubmit = computed(() => {
@@ -345,7 +367,7 @@ onMounted(() => {
           </h3>
 
           <label class="flex items-center justify-between py-2 text-sm text-slate-700">
-            <span>申请扣除卖家信用分</span>
+            <span>{{ creditClaimLabel }}</span>
             <input v-model="form.claimSellerCreditPenalty" type="checkbox" :true-value="1" :false-value="0" />
           </label>
 

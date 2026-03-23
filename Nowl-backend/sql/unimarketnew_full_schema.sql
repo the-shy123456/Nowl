@@ -231,6 +231,8 @@ CREATE TABLE IF NOT EXISTS `dispute_record` (
   `claim_seller_credit_penalty` TINYINT NOT NULL DEFAULT 0 COMMENT '0否,1是',
   `claim_refund` TINYINT NOT NULL DEFAULT 0 COMMENT '0否,1是',
   `claim_refund_amount` DECIMAL(10,2) DEFAULT NULL COMMENT '申请退款金额',
+  `resolved_refund_amount` DECIMAL(10,2) DEFAULT NULL COMMENT '实际裁定退款金额',
+  `resolved_credit_penalty` INT DEFAULT NULL COMMENT '实际裁定扣除信用分',
   `initiator_reply_count` INT NOT NULL DEFAULT 0 COMMENT '发起方补充次数',
   `related_reply_count` INT NOT NULL DEFAULT 0 COMMENT '被投诉方补充次数',
   `conversation_logs` LONGTEXT COMMENT '双方补充记录(JSON)',

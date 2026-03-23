@@ -33,7 +33,7 @@ import java.util.Map;
 @Service
 public class AiAssistantServiceImpl implements AiAssistantService {
 
-    private static final int HISTORY_CONTEXT_LIMIT = 10;
+    private static final int HISTORY_CONTEXT_LIMIT = 100;
     private static final int DEFAULT_HISTORY_LIMIT = 100;
 
     private final AiChatService aiChatService;

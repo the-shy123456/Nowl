@@ -191,6 +191,11 @@ const viewMyFollowers = () => {
   router.push(`/user/${currentUserId.value}/followers`)
 }
 
+const viewMyReviews = () => {
+  if (!currentUserId.value) return
+  router.push(`/review/user/${currentUserId.value}`)
+}
+
 const handleLogout = async () => {
   try {
     await ElMessageBox.confirm('确认退出当前账号？', '退出登录', {
@@ -255,27 +260,34 @@ onMounted(() => {
             </p>
 
             <div class="mt-4 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-              <div class="rounded-xl bg-warm-50 border border-warm-100 px-3 py-2">
+              <button
+                class="rounded-xl bg-warm-50 border border-warm-100 px-3 py-2 text-left hover:border-warm-200 hover:bg-warm-50 transition-colors min-h-[92px] flex flex-col justify-between"
+                @click="viewMyReviews"
+              >
                 <div class="text-warm-500">信用分</div>
                 <div class="text-lg font-extrabold text-warm-700 mt-0.5">{{ userStore.userInfo?.creditScore || 0 }}</div>
-              </div>
-              <div class="rounded-xl bg-emerald-50 border border-emerald-100 px-3 py-2">
+                <div class="text-[11px] text-warm-500 mt-1">查看信用等级与评价</div>
+              </button>
+              <div class="rounded-xl bg-emerald-50 border border-emerald-100 px-3 py-2 min-h-[92px] flex flex-col justify-between">
                 <div class="text-emerald-500">余额</div>
                 <div class="text-lg font-extrabold text-emerald-700 mt-0.5">¥{{ userStore.userInfo?.money || 0 }}</div>
+                <div class="text-[11px] text-emerald-500 mt-1">当前可用余额</div>
               </div>
               <button
-                class="rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-left hover:border-warm-200 hover:bg-warm-50 transition-colors"
+                class="rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-left hover:border-warm-200 hover:bg-warm-50 transition-colors min-h-[92px] flex flex-col justify-between"
                 @click="viewMyFollowing"
               >
                 <div class="text-slate-500">关注</div>
                 <div class="text-lg font-extrabold text-slate-700 mt-0.5">{{ userStore.userInfo?.followCount || 0 }}</div>
+                <div class="text-[11px] text-slate-400 mt-1">我关注的用户</div>
               </button>
               <button
-                class="rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-left hover:border-warm-200 hover:bg-warm-50 transition-colors"
+                class="rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-left hover:border-warm-200 hover:bg-warm-50 transition-colors min-h-[92px] flex flex-col justify-between"
                 @click="viewMyFollowers"
               >
                 <div class="text-slate-500">粉丝</div>
                 <div class="text-lg font-extrabold text-slate-700 mt-0.5">{{ userStore.userInfo?.fanCount || 0 }}</div>
+                <div class="text-[11px] text-slate-400 mt-1">关注我的用户</div>
               </button>
             </div>
           </div>

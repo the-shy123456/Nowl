@@ -52,7 +52,6 @@ public class SearchController {
         if (request.getSchoolCode() == null && schoolCode != null && UserContextHolder.isAuthenticated()) {
             request.setSchoolCode(schoolCode);
         }
-
         // 处理一级分类：查询其下所有子分类ID
         if (parentCategoryId != null && request.getCategoryId() == null) {
             List<Integer> childCategoryIds = categoryService.getChildCategoryIds(parentCategoryId);
@@ -60,7 +59,6 @@ public class SearchController {
                 request.setCategoryIds(childCategoryIds);
             }
         }
-
         // 记录搜索历史和热搜
         if (request.getKeyword() != null && !request.getKeyword().isEmpty()) {
             searchTrackingAsyncService.recordSearchHistory(userId, request.getKeyword());

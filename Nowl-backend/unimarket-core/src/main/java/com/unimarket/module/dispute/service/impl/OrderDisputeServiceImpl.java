@@ -53,9 +53,7 @@ public class OrderDisputeServiceImpl implements OrderDisputeService {
         if (disputeRecordMapper.selectCount(checkWrapper) > 0) {
             throw new BusinessException("该订单已存在进行中的纠纷，请勿重复发起");
         }
-
         Long relatedId = order.getBuyerId().equals(userId) ? order.getSellerId() : order.getBuyerId();
-
         DisputeRecord record = new DisputeRecord();
         record.setInitiatorId(userId);
         record.setRelatedId(relatedId);
@@ -66,7 +64,6 @@ public class OrderDisputeServiceImpl implements OrderDisputeService {
         record.setContent(dto.getReason());
         record.setEvidenceUrls(dto.getEvidenceImages());
         record.setHandleStatus(DisputeStatus.PENDING.getCode());
-
         disputeRecordMapper.insert(record);
         log.info("用户发起订单纠纷: userId={}, orderId={}", userId, dto.getOrderId());
     }

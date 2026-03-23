@@ -26,10 +26,10 @@ public class ElasticsearchConfig extends ElasticsearchConfiguration {
     /**
      * Elasticsearch REST 客户端连接池配置（避免高并发下等待连接导致排队）
      */
-    @Value("${unimarket.elasticsearch.client.max-conn-total:10}")
+    @Value("${unimarket.elasticsearch.client.max-conn-total:20}")
     private int maxConnTotal;
 
-    @Value("${unimarket.elasticsearch.client.max-conn-per-route:10}")
+    @Value("${unimarket.elasticsearch.client.max-conn-per-route:20}")
     private int maxConnPerRoute;
 
     @Override

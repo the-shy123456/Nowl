@@ -102,7 +102,6 @@ public class UserServiceImpl extends ServiceImpl<UserInfoMapper, UserInfo> imple
         if (existUser != null) {
             throw new BusinessException(ResultCode.USER_ALREADY_EXISTS);
         }
-
         // 2. 创建用户
         UserInfo userInfo = new UserInfo();
         userInfo.setPhone(dto.getPhone());
@@ -195,24 +194,20 @@ public class UserServiceImpl extends ServiceImpl<UserInfoMapper, UserInfo> imple
             );
             throw new BusinessException("当前登录行为触发风控策略，请稍后再试");
         }
-
         if (userInfo == null) {
             saveLoginTrace(null, dto.getPhone(), requestIp, requestDevice, "FAIL", "USER_NOT_FOUND", decisionResult.getRiskLevel());
             throw new BusinessException(ResultCode.USER_NOT_FOUND);
         }
-
         // 2. 验证密码
         if (!passwordEncoder.matches(dto.getPassword(), userInfo.getPassword())) {
             saveLoginTrace(userInfo.getUserId(), dto.getPhone(), requestIp, requestDevice, "FAIL", "PASSWORD_ERROR", decisionResult.getRiskLevel());
             throw new BusinessException(ResultCode.USER_PASSWORD_ERROR);
         }
-
         // 3. 检查账号状态
         if (userInfo.getAccountStatus() == 1) {
             saveLoginTrace(userInfo.getUserId(), dto.getPhone(), requestIp, requestDevice, "FAIL", "ACCOUNT_DISABLED", decisionResult.getRiskLevel());
             throw new BusinessException(ResultCode.USER_ACCOUNT_DISABLED);
         }
-
         // 4. 生成JWT Token
         Map<String, Object> claims = new HashMap<>();
         claims.put("sub", userInfo.getPhone());
@@ -377,13 +372,11 @@ public class UserServiceImpl extends ServiceImpl<UserInfoMapper, UserInfo> imple
         if (userId == null) {
             throw new BusinessException(ResultCode.USER_NOT_LOGIN);
         }
-
         // 1. 查询用户信息
         UserInfo userInfo = userInfoMapper.selectById(userId);
         if (userInfo == null) {
             throw new BusinessException(ResultCode.USER_NOT_FOUND);
         }
-
         // 2. 更新用户信息
         if (dto.getNickName() != null) {
             userInfo.setNickName(dto.getNickName());
@@ -393,11 +386,9 @@ public class UserServiceImpl extends ServiceImpl<UserInfoMapper, UserInfo> imple
         }
         if (dto.getCertImage() != null) userInfo.setCertImage(dto.getCertImage());
         if (dto.getSelfImage() != null) userInfo.setSelfImage(dto.getSelfImage());
-
         if (dto.getPhone() != null) {
             userInfo.setPhone(dto.getPhone());
         }
-
         // 认证信息更新
         if (dto.getUserName() != null) userInfo.setUserName(dto.getUserName());
         if (dto.getStudentNo() != null) userInfo.setStudentNo(dto.getStudentNo());
@@ -405,18 +396,14 @@ public class UserServiceImpl extends ServiceImpl<UserInfoMapper, UserInfo> imple
         if (dto.getCampusCode() != null) userInfo.setCampusCode(dto.getCampusCode());
         if (dto.getGender() != null) userInfo.setGender(dto.getGender());
         if (dto.getGrade() != null) userInfo.setGrade(dto.getGrade());
-
         // 如果用户主动提交审核
         if (dto.getAuthStatus() != null && dto.getAuthStatus() == 1) {
             userInfo.setAuthStatus(1); // 变更为待审核
         }
-
         // 3. 保存到数据库
         userInfoMapper.updateById(userInfo);
-
         // 主动失效，避免读到旧缓存
         evictUserInfoCache(userId);
-
         log.info("用户信息更新成功: userId={}", userId);
     }
 
@@ -591,22 +578,18 @@ public class UserServiceImpl extends ServiceImpl<UserInfoMapper, UserInfo> imple
         if (redisCache.get(limitKey, String.class) != null) {
              throw new BusinessException("发送过于频繁，请稍后再试");
         }
-        
         // 生成6位随机验证码
         String code = cn.hutool.core.util.RandomUtil.randomNumbers(6);
-        
         // 发送短信
         boolean success = smsUtils.sendSmsCode(phone, code);
         if (!success) {
             throw new BusinessException("短信发送失败，请稍后重试");
         }
-        
         // 存入Redis，验证码5分钟有效
         redisCache.set(key, code, 300);
         // 设置限流Key，60秒有效
         redisCache.set(limitKey, "1", 60);
-        
-        log.info("短信验证码已发送，phone={}", maskPhone(phone));
+        log.info("短信验证码已发送，phone={},code={}", maskPhone(phone),code);
     }
 
     @Override

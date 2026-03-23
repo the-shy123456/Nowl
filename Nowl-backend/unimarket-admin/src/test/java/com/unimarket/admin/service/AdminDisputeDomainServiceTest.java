@@ -4,15 +4,20 @@ import com.unimarket.admin.service.impl.domain.AdminDisputeDomainService;
 import com.unimarket.admin.service.impl.support.AdminActionLockSupport;
 import com.unimarket.admin.service.impl.support.AdminScopeSupport;
 import com.unimarket.admin.service.impl.support.AdminSchoolInfoSupport;
+import com.unimarket.common.enums.DisputeTargetType;
 import com.unimarket.common.enums.DisputeStatus;
+import com.unimarket.common.enums.ErrandStatus;
 import com.unimarket.common.enums.NoticeType;
 import com.unimarket.common.exception.BusinessException;
+import com.unimarket.module.errand.entity.ErrandTask;
+import com.unimarket.module.errand.mapper.ErrandTaskMapper;
 import com.unimarket.module.goods.mapper.GoodsInfoMapper;
 import com.unimarket.module.dispute.entity.DisputeRecord;
 import com.unimarket.module.dispute.mapper.DisputeRecordMapper;
 import com.unimarket.module.iam.service.IamAccessService;
 import com.unimarket.module.notice.service.NoticeService;
 import com.unimarket.module.order.mapper.OrderInfoMapper;
+import com.unimarket.module.user.entity.UserInfo;
 import com.unimarket.module.user.mapper.UserInfoMapper;
 import com.unimarket.module.user.service.CreditScoreService;
 import org.apache.rocketmq.spring.core.RocketMQTemplate;
@@ -23,6 +28,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.math.BigDecimal;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -41,6 +48,8 @@ class AdminDisputeDomainServiceTest {
     private DisputeRecordMapper disputeRecordMapper;
     @Mock
     private OrderInfoMapper orderInfoMapper;
+    @Mock
+    private ErrandTaskMapper errandTaskMapper;
     @Mock
     private UserInfoMapper userInfoMapper;
     @Mock
@@ -99,14 +108,14 @@ class AdminDisputeDomainServiceTest {
         verify(noticeService).sendNotice(
                 100L,
                 "纠纷处理结果",
-                "您发起的纠纷已处理，结果：同意退款",
+                "您发起的纠纷已处理，结果：纠纷已处理；处理说明：同意退款",
                 NoticeType.DISPUTE.getCode(),
                 10L
         );
         verify(noticeService).sendNotice(
                 200L,
                 "纠纷处理结果",
-                "涉及您的纠纷已处理，结果：同意退款",
+                "涉及您的纠纷已处理，结果：纠纷已处理；处理说明：同意退款",
                 NoticeType.DISPUTE.getCode(),
                 10L
         );
@@ -159,5 +168,62 @@ class AdminDisputeDomainServiceTest {
                 null,
                 null
         ));
+    }
+
+    @Test
+    @DisplayName("handleDispute: 跑腿纠纷裁定退款后返还发布者并将剩余金额结算给接单人")
+    void handleDispute_errandResolved_refundPublisherAndPayAcceptor() {
+        DisputeRecord record = new DisputeRecord();
+        record.setRecordId(20L);
+        record.setInitiatorId(100L);
+        record.setRelatedId(200L);
+        record.setContentId(300L);
+        record.setTargetType(DisputeTargetType.ERRAND.getCode());
+        record.setSchoolCode("SC001");
+        record.setCampusCode("C001");
+        record.setHandleStatus(DisputeStatus.PENDING.getCode());
+        record.setClaimRefund(1);
+        record.setClaimRefundAmount(new BigDecimal("30.00"));
+
+        ErrandTask task = new ErrandTask();
+        task.setTaskId(300L);
+        task.setPublisherId(100L);
+        task.setAcceptorId(200L);
+        task.setReward(new BigDecimal("30.00"));
+        task.setTaskStatus(ErrandStatus.PENDING_CONFIRM.getCode());
+
+        UserInfo publisher = new UserInfo();
+        publisher.setUserId(100L);
+        publisher.setMoney(new BigDecimal("10.00"));
+
+        UserInfo acceptor = new UserInfo();
+        acceptor.setUserId(200L);
+        acceptor.setMoney(new BigDecimal("5.00"));
+
+        when(disputeRecordMapper.selectById(20L)).thenReturn(record);
+        when(errandTaskMapper.selectById(300L)).thenReturn(task);
+        when(userInfoMapper.selectById(100L)).thenReturn(publisher);
+        when(userInfoMapper.selectById(200L)).thenReturn(acceptor);
+        when(disputeRecordMapper.updateById(any(DisputeRecord.class))).thenReturn(1);
+
+        disputeDomainService.handleDispute(
+                1L,
+                20L,
+                "跑腿未按要求完成，退回全部悬赏",
+                DisputeStatus.RESOLVED.getCode(),
+                null,
+                new BigDecimal("30.00")
+        );
+
+        verify(userInfoMapper).updateById(publisher);
+        verify(errandTaskMapper).updateById(task);
+        verify(userInfoMapper, never()).updateById(acceptor);
+        verify(noticeService).sendNotice(
+                100L,
+                "纠纷处理结果",
+                "您发起的纠纷已处理，结果：退款¥30；处理说明：跑腿未按要求完成，退回全部悬赏",
+                NoticeType.DISPUTE.getCode(),
+                20L
+        );
     }
 }

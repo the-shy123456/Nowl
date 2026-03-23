@@ -81,6 +81,7 @@ const switchStatus = (status: number | undefined) => {
   if (activeStatus.value === status) return
   activeStatus.value = status
   pageNum.value = 1
+  void refresh(1)
 }
 
 const viewDetail = (recordId: number) => {

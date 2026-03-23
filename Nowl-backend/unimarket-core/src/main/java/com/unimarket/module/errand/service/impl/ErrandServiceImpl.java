@@ -5,6 +5,8 @@ import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.unimarket.common.config.RocketMQConfig;
+import com.unimarket.common.enums.DisputeStatus;
+import com.unimarket.common.enums.DisputeTargetType;
 import com.unimarket.common.enums.ErrandStatus;
 import com.unimarket.common.enums.NoticeType;
 import com.unimarket.common.enums.ReviewStatus;
@@ -15,6 +17,8 @@ import com.unimarket.common.constant.CacheConstants;
 import com.unimarket.common.result.PageQuery;
 import com.unimarket.common.result.ResultCode;
 import com.unimarket.common.utils.RedisCache;
+import com.unimarket.module.dispute.entity.DisputeRecord;
+import com.unimarket.module.dispute.mapper.DisputeRecordMapper;
 import com.unimarket.module.errand.dto.ErrandPublishDTO;
 import com.unimarket.module.errand.dto.ErrandQueryDTO;
 import com.unimarket.module.errand.dto.LocationUploadDTO;
@@ -67,6 +71,7 @@ public class ErrandServiceImpl implements ErrandService {
     private final UserInfoMapper userInfoMapper;
     private final SchoolInfoMapper schoolInfoMapper;
     private final NoticeService noticeService;
+    private final DisputeRecordMapper disputeRecordMapper;
     private final RedissonClient redissonClient;
     private final ErrandDelayMessageService errandDelayMessageService;
     private final RocketMQTemplate rocketMQTemplate;
@@ -81,7 +86,6 @@ public class ErrandServiceImpl implements ErrandService {
         if (user == null) {
             throw new BusinessException(ResultCode.USER_NOT_FOUND);
         }
-
         // 校区合法性校验
         LambdaQueryWrapper<SchoolInfo> schoolWrapper = new LambdaQueryWrapper<>();
         schoolWrapper.eq(SchoolInfo::getSchoolCode, dto.getSchoolCode())
@@ -91,11 +95,9 @@ public class ErrandServiceImpl implements ErrandService {
         if (schoolInfo == null) {
             throw new BusinessException("校区信息不存在或已停用");
         }
-
         Map<String, Object> features = new HashMap<>();
         features.put("reward", dto.getReward());
         features.put("titleLength", dto.getTitle() == null ? 0 : dto.getTitle().length());
-
         Map<String, Object> rawPayload = new HashMap<>();
         rawPayload.put("title", dto.getTitle());
         rawPayload.put("taskContent", dto.getTaskContent());
@@ -103,7 +105,6 @@ public class ErrandServiceImpl implements ErrandService {
         rawPayload.put("deliveryAddress", dto.getDeliveryAddress());
         rawPayload.put("reward", dto.getReward());
         rawPayload.put("publisherId", userId);
-
         riskControlService.assertAllowed(RiskContext.builder()
                 .eventType(RiskEventType.ERRAND_PUBLISH)
                 .userId(userId)
@@ -124,7 +125,6 @@ public class ErrandServiceImpl implements ErrandService {
         // 扣除余额（资金托管）
         user.setMoney(user.getMoney().subtract(task.getReward()));
         userInfoMapper.updateById(user);
-
         task.setPublisherId(userId);
         task.setTaskStatus(ErrandStatus.PENDING.getCode());
         task.setSchoolCode(dto.getSchoolCode());
@@ -135,7 +135,6 @@ public class ErrandServiceImpl implements ErrandService {
         task.setDeliveryLongitude(null);
         task.setReviewStatus(ReviewStatus.WAIT_REVIEW.getCode());
         task.setAuditReason(null);
-
         if (dto.getDeadline() != null && !dto.getDeadline().isEmpty()) {
             try {
                 task.setDeadline(LocalDateTime.parse(dto.getDeadline(),
@@ -150,7 +149,6 @@ public class ErrandServiceImpl implements ErrandService {
                 }
             }
         }
-
         errandTaskMapper.insert(task);
         evictErrandDetailCache(task.getTaskId(), task.getSchoolCode());
         log.info("发布跑腿任务成功: taskId={}, userId={}, reward={}, reviewStatus={}",
@@ -789,6 +787,13 @@ public class ErrandServiceImpl implements ErrandService {
         Map<Long, UserInfo> userMap = userInfoMapper.selectBatchIds(userIds).stream()
                 .collect(Collectors.toMap(UserInfo::getUserId, u -> u));
 
+        List<Long> taskIds = tasks.stream()
+                .map(ErrandTask::getTaskId)
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        Map<Long, DisputeRecord> activeDisputeMap = buildActiveErrandDisputeMap(taskIds);
+        Map<Long, DisputeRecord> latestClosedDisputeMap = buildLatestClosedErrandDisputeMap(taskIds);
+
         // 3. 转换并注入信息
         return tasks.stream().map(task -> {
             ErrandVO vo = BeanUtil.copyProperties(task, ErrandVO.class);
@@ -819,8 +824,83 @@ public class ErrandServiceImpl implements ErrandService {
                 }
             }
 
+            fillActiveDisputeInfo(vo, activeDisputeMap);
+            fillLatestClosedDisputeInfo(vo, latestClosedDisputeMap);
+
             return vo;
         }).collect(Collectors.toList());
+    }
+
+    private Map<Long, DisputeRecord> buildActiveErrandDisputeMap(List<Long> taskIds) {
+        if (taskIds == null || taskIds.isEmpty()) {
+            return Map.of();
+        }
+        LambdaQueryWrapper<DisputeRecord> wrapper = new LambdaQueryWrapper<>();
+        wrapper.in(DisputeRecord::getContentId, taskIds)
+                .eq(DisputeRecord::getTargetType, DisputeTargetType.ERRAND.getCode())
+                .in(DisputeRecord::getHandleStatus, DisputeStatus.PENDING.getCode(), DisputeStatus.PROCESSING.getCode())
+                .orderByDesc(DisputeRecord::getCreateTime);
+        List<DisputeRecord> records = disputeRecordMapper.selectList(wrapper);
+        if (records.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, DisputeRecord> map = new HashMap<>();
+        for (DisputeRecord record : records) {
+            map.putIfAbsent(record.getContentId(), record);
+        }
+        return map;
+    }
+
+    private Map<Long, DisputeRecord> buildLatestClosedErrandDisputeMap(List<Long> taskIds) {
+        if (taskIds == null || taskIds.isEmpty()) {
+            return Map.of();
+        }
+        LambdaQueryWrapper<DisputeRecord> wrapper = new LambdaQueryWrapper<>();
+        wrapper.in(DisputeRecord::getContentId, taskIds)
+                .eq(DisputeRecord::getTargetType, DisputeTargetType.ERRAND.getCode())
+                .in(DisputeRecord::getHandleStatus,
+                        DisputeStatus.RESOLVED.getCode(),
+                        DisputeStatus.REJECTED.getCode())
+                .orderByDesc(DisputeRecord::getCreateTime);
+        List<DisputeRecord> records = disputeRecordMapper.selectList(wrapper);
+        if (records.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, DisputeRecord> map = new HashMap<>();
+        for (DisputeRecord record : records) {
+            map.putIfAbsent(record.getContentId(), record);
+        }
+        return map;
+    }
+
+    private void fillActiveDisputeInfo(ErrandVO vo, Map<Long, DisputeRecord> activeDisputeMap) {
+        DisputeRecord activeDispute = activeDisputeMap.get(vo.getTaskId());
+        if (activeDispute == null) {
+            vo.setHasActiveDispute(false);
+            vo.setActiveDisputeId(null);
+            vo.setActiveDisputeStatus(null);
+            return;
+        }
+        vo.setHasActiveDispute(true);
+        vo.setActiveDisputeId(activeDispute.getRecordId());
+        vo.setActiveDisputeStatus(activeDispute.getHandleStatus());
+    }
+
+    private void fillLatestClosedDisputeInfo(ErrandVO vo, Map<Long, DisputeRecord> latestClosedDisputeMap) {
+        DisputeRecord latestClosedDispute = latestClosedDisputeMap.get(vo.getTaskId());
+        if (latestClosedDispute == null) {
+            vo.setLatestClosedDisputeId(null);
+            vo.setLatestClosedDisputeStatus(null);
+            vo.setLatestClosedDisputeResult(null);
+            vo.setLatestClosedDisputeRefundAmount(null);
+            vo.setLatestClosedDisputeCreditPenalty(null);
+            return;
+        }
+        vo.setLatestClosedDisputeId(latestClosedDispute.getRecordId());
+        vo.setLatestClosedDisputeStatus(latestClosedDispute.getHandleStatus());
+        vo.setLatestClosedDisputeResult(latestClosedDispute.getHandleResult());
+        vo.setLatestClosedDisputeRefundAmount(latestClosedDispute.getResolvedRefundAmount());
+        vo.setLatestClosedDisputeCreditPenalty(latestClosedDispute.getResolvedCreditPenalty());
     }
 }
 

@@ -39,6 +39,8 @@ export interface DisputeDetail {
   claimSellerCreditPenalty?: number
   claimRefund?: number
   claimRefundAmount?: number
+  resolvedRefundAmount?: number
+  resolvedCreditPenalty?: number
   initiatorReplyCount?: number
   relatedReplyCount?: number
   canReply?: boolean

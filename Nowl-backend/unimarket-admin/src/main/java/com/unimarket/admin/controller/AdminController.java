@@ -189,10 +189,11 @@ public class AdminController {
     @PreAuthorize("@iamAuth.hasPerm(authentication.principal.userId, 'admin:dispute:list:view')")
     public Result<PageResult<DisputeVO>> getDisputeList(@Valid PageQuery query,
                                                         @RequestParam(required = false) Integer status,
+                                                        @RequestParam(required = false) Integer targetType,
                                                         @RequestParam(required = false) String schoolCode,
                                                         @RequestParam(required = false) String campusCode) {
         Long operatorId = UserContextHolder.getUserId();
-        Page<DisputeVO> page = adminService.getDisputeList(operatorId, query, status, schoolCode, campusCode);
+        Page<DisputeVO> page = adminService.getDisputeList(operatorId, query, status, targetType, schoolCode, campusCode);
         return Result.success(PageResult.of(page.getRecords(), page.getTotal()));
     }
 

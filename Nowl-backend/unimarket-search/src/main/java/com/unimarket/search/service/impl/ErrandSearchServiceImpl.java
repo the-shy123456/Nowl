@@ -62,11 +62,9 @@ public class ErrandSearchServiceImpl implements ErrandSearchService {
 
         return new PageResult<>(searchHits.getTotalHits(), resultList);
     }
-
     private NativeQuery buildSearchQuery(ErrandSearchRequestDTO request) {
         NativeQueryBuilder queryBuilder = NativeQuery.builder();
         BoolQuery.Builder boolQuery = new BoolQuery.Builder();
-
         // 关键词搜索
         if (StrUtil.isNotBlank(request.getKeyword())) {
             String keyword = request.getKeyword().trim();
@@ -81,7 +79,6 @@ public class ErrandSearchServiceImpl implements ErrandSearchService {
                 return m;
             })));
         }
-
         // 任务状态过滤：默认仅展示待接单任务，避免已完成/待确认任务出现在公开接单页
         Integer taskStatus = request.getTaskStatus();
         if (taskStatus == null) {
@@ -91,21 +88,18 @@ public class ErrandSearchServiceImpl implements ErrandSearchService {
         boolQuery.filter(Query.of(q -> q
             .term(t -> t.field("taskStatus").value(finalTaskStatus))
         ));
-
         // 学校筛选
         if (StrUtil.isNotBlank(request.getSchoolCode())) {
             boolQuery.filter(Query.of(q -> q
                 .term(t -> t.field("schoolCode").value(request.getSchoolCode()))
             ));
         }
-
         // 校区筛选
         if (StrUtil.isNotBlank(request.getCampusCode())) {
             boolQuery.filter(Query.of(q -> q
                 .term(t -> t.field("campusCode").value(request.getCampusCode()))
             ));
         }
-
         // 赏金区间
         if (request.getMinReward() != null || request.getMaxReward() != null) {
             boolQuery.filter(Query.of(q -> q

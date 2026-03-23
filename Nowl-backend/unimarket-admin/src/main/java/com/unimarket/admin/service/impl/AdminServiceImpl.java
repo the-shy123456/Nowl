@@ -121,9 +121,10 @@ public class AdminServiceImpl implements AdminService {
     public Page<DisputeVO> getDisputeList(Long operatorId,
                                          PageQuery query,
                                          Integer status,
+                                         Integer targetType,
                                          String schoolCode,
                                          String campusCode) {
-        return disputeDomainService.getDisputeList(operatorId, query, status, schoolCode, campusCode);
+        return disputeDomainService.getDisputeList(operatorId, query, status, targetType, schoolCode, campusCode);
     }
 
     @Override
@@ -167,4 +168,3 @@ public class AdminServiceImpl implements AdminService {
         noticeDomainService.broadcastNotice(operatorId, title, content, schoolCode, campusCode);
     }
 }
-

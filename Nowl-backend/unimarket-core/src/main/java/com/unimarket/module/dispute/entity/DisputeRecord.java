@@ -88,6 +88,16 @@ public class DisputeRecord implements Serializable {
     private BigDecimal claimRefundAmount;
 
     /**
+     * 实际裁定退款金额
+     */
+    private BigDecimal resolvedRefundAmount;
+
+    /**
+     * 实际裁定扣除信用分
+     */
+    private Integer resolvedCreditPenalty;
+
+    /**
      * 发起人补充次数
      */
     private Integer initiatorReplyCount;

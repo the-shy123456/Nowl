@@ -212,24 +212,20 @@ public class OrderServiceImpl implements OrderService {
         // 获取分布式锁，锁粒度为订单ID，串行化订单状态流转
         String lockKey = "order:lock:lifecycle:" + orderId;
         RLock lock = redissonClient.getLock(lockKey);
-        
         try {
             boolean acquired = lock.tryLock(3, 10, TimeUnit.SECONDS);
             if (!acquired) {
                 throw new BusinessException("系统繁忙，请稍后重试");
             }
-            
             // 查询订单
             OrderInfo orderInfo = orderInfoMapper.selectById(orderId);
             if (orderInfo == null) {
                 throw new BusinessException("订单不存在");
             }
-
             // 检查订单状态
             if (!OrderStatus.PENDING_PAYMENT.getCode().equals(orderInfo.getOrderStatus())) {
                 throw new BusinessException("订单状态不正确");
             }
-
             // 再加商品维度锁，避免同一商品多个待支付订单并发支付造成超卖
             String goodsLockKey = "order:lock:goods:" + orderInfo.getProductId();
             RLock goodsLock = redissonClient.getLock(goodsLockKey);
@@ -239,7 +235,6 @@ public class OrderServiceImpl implements OrderService {
                 if (!goodsLockAcquired) {
                     throw new BusinessException("系统繁忙，请稍后重试");
                 }
-
                 GoodsInfo goodsInfo = goodsInfoMapper.selectById(orderInfo.getProductId());
                 if (goodsInfo == null) {
                     throw new BusinessException("商品不存在");
@@ -258,30 +253,24 @@ public class OrderServiceImpl implements OrderService {
                     orderInfoMapper.updateById(orderInfo);
                     throw new BusinessException("商品审核状态已变化，订单已自动取消");
                 }
-
                 // 查询买家信息
                 UserInfo buyer = userInfoMapper.selectById(orderInfo.getBuyerId());
                 if (buyer == null) {
                     throw new BusinessException("用户不存在");
                 }
-
                 // 检查余额
                 if (buyer.getMoney().compareTo(orderInfo.getTotalAmount()) < 0) {
                     throw new BusinessException("余额不足");
                 }
-
                 // 扣减买家余额
                 buyer.setMoney(buyer.getMoney().subtract(orderInfo.getTotalAmount()));
                 userInfoMapper.updateById(buyer);
-
                 // 注意：此时不增加卖家余额，资金暂时托管在平台
                 // 等买家确认收货或超时自动收货后，再转入卖家账户
-
                 // 更新订单状态
                 orderInfo.setOrderStatus(OrderStatus.PENDING_DELIVERY.getCode()); // 待发货
                 orderInfo.setPayTime(LocalDateTime.now());
                 orderInfoMapper.updateById(orderInfo);
-
                 // 更新商品状态
                 goodsInfo.setTradeStatus(TradeStatus.SOLD.getCode()); // 已售出
                 goodsInfoMapper.updateById(goodsInfo);
@@ -291,7 +280,6 @@ public class OrderServiceImpl implements OrderService {
                     goodsLock.unlock();
                 }
             }
-
             log.info("买家{}支付订单成功，订单号：{}，金额：{}", orderInfo.getBuyerId(), orderInfo.getOrderNo(), orderInfo.getTotalAmount());
             
             // 发送通知给卖家
@@ -301,7 +289,6 @@ public class OrderServiceImpl implements OrderService {
                     "订单 [" + orderInfo.getOrderNo() + "] 买家已支付，请尽快发货。",
                     NoticeType.TRADE.getCode()
             );
-            
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new BusinessException("支付过程中断");
@@ -475,47 +462,37 @@ public class OrderServiceImpl implements OrderService {
             if (!acquired) {
                 throw new BusinessException("系统繁忙，请稍后重试");
             }
-
             OrderInfo orderInfo = orderInfoMapper.selectById(orderId);
             if (orderInfo == null) {
                 throw new BusinessException("订单不存在");
             }
-
             if (!orderInfo.getBuyerId().equals(userId)) {
                 throw new BusinessException("仅买家可申请退款");
             }
-
             if (!OrderStatus.PENDING_DELIVERY.getCode().equals(orderInfo.getOrderStatus())
                     && !OrderStatus.PENDING_RECEIVE.getCode().equals(orderInfo.getOrderStatus())) {
                 throw new BusinessException("当前订单状态不支持退款");
             }
-
             if (RefundStatus.PENDING.getCode().equals(orderInfo.getRefundStatus())) {
                 throw new BusinessException("退款申请已在处理中");
             }
-
             // 存在进行中纠纷时禁止申请退款，避免仲裁与退款流程冲突
             if (hasActiveOrderDispute(orderId)) {
                 throw new BusinessException("订单存在进行中纠纷，暂不可申请退款");
             }
-
             if (dto.getAmount().compareTo(orderInfo.getTotalAmount()) > 0) {
                 throw new BusinessException("退款金额不能超过实付金额");
             }
-
             orderInfo.setRefundStatus(RefundStatus.PENDING.getCode());
             orderInfo.setRefundReason(dto.getReason());
             orderInfo.setRefundAmount(dto.getAmount());
             orderInfo.setRefundApplyTime(LocalDateTime.now());
-
             boolean canFastRefund = OrderStatus.PENDING_DELIVERY.getCode().equals(orderInfo.getOrderStatus())
                     && creditScoreService.getCreditScore(userId) >= 100;
-
             if (canFastRefund) {
                 orderInfo.setRefundFastTrack(1);
                 finalizeRefund(orderInfo, 0L, "信用优秀极速退款", true, true);
                 creditScoreService.adjustByFastRefund(userId);
-
                 noticeService.sendNotice(
                         orderInfo.getBuyerId(),
                         "极速退款成功",
@@ -532,7 +509,6 @@ public class OrderServiceImpl implements OrderService {
                 );
                 return;
             }
-
             orderInfo.setRefundFastTrack(0);
             orderInfo.setRefundDeadline(LocalDateTime.now().plusHours(24));
             orderInfoMapper.updateById(orderInfo);
@@ -881,6 +857,10 @@ public class OrderServiceImpl implements OrderService {
                 vo,
                 buildActiveOrderDisputeMap(List.of(orderInfo.getOrderId()))
         );
+        fillLatestClosedDisputeInfo(
+                vo,
+                buildLatestClosedOrderDisputeMap(List.of(orderInfo.getOrderId()))
+        );
 
         return vo;
     }
@@ -915,6 +895,7 @@ public class OrderServiceImpl implements OrderService {
                 .distinct()
                 .collect(Collectors.toList());
         Map<Long, DisputeRecord> activeDisputeMap = buildActiveOrderDisputeMap(orderIds);
+        Map<Long, DisputeRecord> latestClosedDisputeMap = buildLatestClosedOrderDisputeMap(orderIds);
 
         // 转换为VO
         List<OrderVO> voList = new ArrayList<>();
@@ -943,6 +924,7 @@ public class OrderServiceImpl implements OrderService {
             }
 
             fillActiveDisputeInfo(vo, activeDisputeMap);
+            fillLatestClosedDisputeInfo(vo, latestClosedDisputeMap);
 
             voList.add(vo);
         }
@@ -970,6 +952,28 @@ public class OrderServiceImpl implements OrderService {
         return map;
     }
 
+    private Map<Long, DisputeRecord> buildLatestClosedOrderDisputeMap(List<Long> orderIds) {
+        if (orderIds == null || orderIds.isEmpty()) {
+            return Map.of();
+        }
+        LambdaQueryWrapper<DisputeRecord> wrapper = new LambdaQueryWrapper<>();
+        wrapper.in(DisputeRecord::getContentId, orderIds)
+                .eq(DisputeRecord::getTargetType, DisputeTargetType.ORDER.getCode())
+                .in(DisputeRecord::getHandleStatus,
+                        DisputeStatus.RESOLVED.getCode(),
+                        DisputeStatus.REJECTED.getCode())
+                .orderByDesc(DisputeRecord::getCreateTime);
+        List<DisputeRecord> records = disputeRecordMapper.selectList(wrapper);
+        if (records.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, DisputeRecord> map = new java.util.HashMap<>();
+        for (DisputeRecord record : records) {
+            map.putIfAbsent(record.getContentId(), record);
+        }
+        return map;
+    }
+
     private void fillActiveDisputeInfo(OrderVO vo, Map<Long, DisputeRecord> activeDisputeMap) {
         DisputeRecord activeDispute = activeDisputeMap.get(vo.getOrderId());
         if (activeDispute == null) {
@@ -981,6 +985,23 @@ public class OrderServiceImpl implements OrderService {
         vo.setHasActiveDispute(true);
         vo.setActiveDisputeId(activeDispute.getRecordId());
         vo.setActiveDisputeStatus(activeDispute.getHandleStatus());
+    }
+
+    private void fillLatestClosedDisputeInfo(OrderVO vo, Map<Long, DisputeRecord> latestClosedDisputeMap) {
+        DisputeRecord latestClosedDispute = latestClosedDisputeMap.get(vo.getOrderId());
+        if (latestClosedDispute == null) {
+            vo.setLatestClosedDisputeId(null);
+            vo.setLatestClosedDisputeStatus(null);
+            vo.setLatestClosedDisputeResult(null);
+            vo.setLatestClosedDisputeRefundAmount(null);
+            vo.setLatestClosedDisputeCreditPenalty(null);
+            return;
+        }
+        vo.setLatestClosedDisputeId(latestClosedDispute.getRecordId());
+        vo.setLatestClosedDisputeStatus(latestClosedDispute.getHandleStatus());
+        vo.setLatestClosedDisputeResult(latestClosedDispute.getHandleResult());
+        vo.setLatestClosedDisputeRefundAmount(latestClosedDispute.getResolvedRefundAmount());
+        vo.setLatestClosedDisputeCreditPenalty(latestClosedDispute.getResolvedCreditPenalty());
     }
 
     private boolean hasActiveOrderDispute(Long orderId) {

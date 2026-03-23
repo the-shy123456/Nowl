@@ -96,6 +96,7 @@ import { hasPermission, hasAnyPermission } from '@/utils/authz'
 import { useUserStore } from '@/stores/user'
 import {
   createQueryBinding,
+  parseOptionalEnumQueryNumber,
   parseOptionalPositiveIntQuery,
   parsePositiveIntQuery,
   serializeOptionalPositiveIntQuery,
@@ -123,7 +124,7 @@ export const useAdminDashboard = () => {
   const route = useRoute()
   const router = useRouter()
   const userStore = useUserStore()
-  
+
   type AdminMenuId =
     | 'dashboard'
     | 'goods-audit'
@@ -138,16 +139,16 @@ export const useAdminDashboard = () => {
     | 'iam-center'
     | 'audit-center'
     | 'search-manage'
-  
+
   // 状态定义
   const activeMenu = ref<AdminMenuId>('dashboard')
   const loading = ref(false)
   const sidebarCollapsed = ref(false)
   const manualRefreshSpinning = ref(false)
-  
+
   // 仪表盘统计数据
   const dashboardStats = ref<DashboardStats | null>(null)
-  
+
   // 动画数字
   const animatedStats = ref({
     totalUsers: 0,
@@ -168,28 +169,28 @@ export const useAdminDashboard = () => {
     totalErrands: 0,
     activeErrands: 0,
   })
-  
+
   // 数字动画函数
   const animateNumber = (key: keyof typeof animatedStats.value, target: number, duration = 1000) => {
     const start = animatedStats.value[key]
     const startTime = performance.now()
-  
+
     const animate = (currentTime: number) => {
       const elapsed = currentTime - startTime
       const progress = Math.min(elapsed / duration, 1)
-  
+
       // 使用 easeOutQuart 缓动函数
       const easeOut = 1 - Math.pow(1 - progress, 4)
       animatedStats.value[key] = Math.floor(start + (target - start) * easeOut)
-  
+
       if (progress < 1) {
         requestAnimationFrame(animate)
       }
     }
-  
+
     requestAnimationFrame(animate)
   }
-  
+
   // 监听数据变化，触发动画
   watch(dashboardStats, (newStats) => {
     if (newStats) {
@@ -201,17 +202,17 @@ export const useAdminDashboard = () => {
       })
     }
   }, { immediate: true })
-  
+
   // 分页状态
   const pagination = ref({
     pageNum: 1,
     pageSize: 10,
     total: 0,
   })
-  
+
   // 搜索关键词
   const searchKeyword = ref('')
-  
+
   // 筛选状态
   const filterSchoolCode = ref('')
   const filterCampusCode = ref('')
@@ -225,15 +226,16 @@ export const useAdminDashboard = () => {
   const errandStatusFilter = ref<number | '' | undefined>('')
   const errandReviewStatusFilter = ref<number | '' | undefined>('')
   const disputeStatusFilter = ref<number | '' | undefined>('')
+  const disputeTargetTypeFilter = ref<number | '' | undefined>('')
   const schoolList = ref<SchoolInfo[]>([])
   const campusList = ref<SchoolInfo[]>([])
-  
+
   // 顶部浮层交互
   const showNoticePanel = ref(false)
   const showAvatarPanel = ref(false)
   const noticePanelRef = ref<HTMLElement | null>(null)
   const avatarPanelRef = ref<HTMLElement | null>(null)
-  
+
   // 数据列表
   const pendingGoods = ref<GoodsVO[]>([])
   const pendingAuthUsers = ref<PendingAuthUserItem[]>([])
@@ -254,7 +256,7 @@ export const useAdminDashboard = () => {
   const permissionChanges = ref<PermissionChangeItem[]>([])
   const loginTraces = ref<LoginTraceItem[]>([])
   const auditOverview = ref<AuditOverview | null>(null)
-  
+
   // 搜索管理状态
   const searchOpLoading = ref(false)
   const adminActionPendingKeys = ref<Set<string>>(new Set())
@@ -285,7 +287,7 @@ export const useAdminDashboard = () => {
   const isRunnerAuditPending = (userId: number) => isAdminActionPending(`runner-audit:${userId}`)
   const isErrandAuditPending = (taskId: number) => isAdminActionPending(`errand-audit:${taskId}`)
   const isDisputeHandleOpeningPending = (disputeId: number) => isAdminActionPending(`dispute-open:${disputeId}`)
-  
+
   // 用户详情对话框状态
   const showUserDetailDialog = ref(false)
   const userDetailData = ref<UserDetailVO | null>(null)
@@ -309,13 +311,17 @@ export const useAdminDashboard = () => {
 
   const disputeHandleMaxRefund = computed(() => {
     const detail = disputeHandleDetail.value
-    if (!detail || detail.targetType !== 0) {
+    if (!detail) {
       return null
     }
     const orderAmount = Number(detail.orderAmount ?? NaN)
+    const errandReward = Number(detail.errandReward ?? NaN)
     const claimAmount = Number(detail.claimRefundAmount ?? NaN)
 
     let max = Number.isFinite(orderAmount) && orderAmount > 0 ? orderAmount : NaN
+    if ((!Number.isFinite(max) || max <= 0) && Number.isFinite(errandReward) && errandReward > 0) {
+      max = errandReward
+    }
     if (Number.isFinite(claimAmount) && claimAmount > 0) {
       max = Number.isFinite(max) ? Math.min(max, claimAmount) : claimAmount
     }
@@ -330,7 +336,7 @@ export const useAdminDashboard = () => {
   const canDisputeRefund = computed(() => {
     if (disputeHandleForm.value.handleStatus !== 2) return false
     const detail = disputeHandleDetail.value
-    return detail?.targetType === 0 && Number(detail?.claimRefund) === 1
+    return (detail?.targetType === 0 || detail?.targetType === 1) && Number(detail?.claimRefund) === 1
   })
 
   const disputeHandleClaimSummary = computed(() => {
@@ -339,7 +345,7 @@ export const useAdminDashboard = () => {
 
     const parts: string[] = []
     parts.push(`申请扣分：${Number(detail.claimSellerCreditPenalty) === 1 ? '是' : '否'}`)
-    if (detail.targetType === 0) {
+    if (detail.targetType === 0 || detail.targetType === 1) {
       if (Number(detail.claimRefund) === 1) {
         const claimAmount = Number(detail.claimRefundAmount ?? NaN)
         parts.push(`申请退款：是${Number.isFinite(claimAmount) && claimAmount > 0 ? `（¥${claimAmount}）` : ''}`)
@@ -349,7 +355,7 @@ export const useAdminDashboard = () => {
     }
     return parts.join('，')
   })
-  
+
   const riskTab = ref<'mode' | 'events' | 'cases' | 'rules' | 'behavior' | 'blacklist' | 'whitelist'>('events')
   const auditTab = ref<'operations' | 'permission' | 'login'>('operations')
   const riskTabOptions = ['mode', 'events', 'cases', 'rules', 'behavior', 'blacklist', 'whitelist'] as const
@@ -371,7 +377,7 @@ export const useAdminDashboard = () => {
   const iamTargetUserId = ref<number | null>(null)
   const auditUserIdInput = ref('')
   const auditTargetUserId = ref<number | null>(null)
-  
+
   // 菜单配置
   const menus: Array<{ id: AdminMenuId; label: string; icon: unknown; badge: keyof DashboardStats | null }> = [
     { id: 'dashboard', label: '数据概览', icon: TrendingUp, badge: null },
@@ -381,14 +387,14 @@ export const useAdminDashboard = () => {
     { id: 'goods-manage', label: '商品管理', icon: ShoppingBag, badge: null },
     { id: 'user-manage', label: '用户管理', icon: Users, badge: null },
     { id: 'order-manage', label: '订单管理', icon: ClipboardList, badge: null },
-    { id: 'errand-manage', label: '跑腿管理', icon: Bike, badge: null },
+    { id: 'errand-manage', label: '跑腿审核', icon: Bike, badge: null },
     { id: 'dispute-manage', label: '纠纷管理', icon: AlertTriangle, badge: 'pendingDisputes' },
     { id: 'risk-center', label: '风控中心', icon: ShieldCheck, badge: null },
     { id: 'iam-center', label: 'IAM权限', icon: Users, badge: null },
     { id: 'audit-center', label: '审计中心', icon: ClipboardList, badge: null },
     { id: 'search-manage', label: '搜索管理', icon: Search, badge: null },
   ]
-  
+
   const adminMenuRouteMap: Record<AdminMenuId, string> = {
     dashboard: '/admin/dashboard',
     'goods-audit': '/admin/goods-audit',
@@ -404,7 +410,7 @@ export const useAdminDashboard = () => {
     'audit-center': '/admin/audit',
     'search-manage': '/admin/search-manage',
   }
-  
+
   const menuPerms: Record<AdminMenuId, string[]> = {
     dashboard: ['admin:dashboard:view'],
     'goods-audit': ['admin:goods:pending:view'],
@@ -420,42 +426,42 @@ export const useAdminDashboard = () => {
     'audit-center': ['admin:audit:operation:view', 'admin:audit:permission:view', 'admin:audit:login:view'],
     'search-manage': ['admin:search:manage'],
   }
-  
+
   const visibleMenus = computed(() => menus.filter((menu) => hasAnyPermission(userStore.userInfo, menuPerms[menu.id])))
-  
+
   const roleCodes = computed(() => userStore.userInfo?.roleCodes || [])
   const isSuperAdmin = computed(() => roleCodes.value.includes('SUPER_ADMIN'))
   const isSchoolAdmin = computed(() => !isSuperAdmin.value && roleCodes.value.includes('SCHOOL_ADMIN'))
   const isCampusAdmin = computed(() => !isSuperAdmin.value && roleCodes.value.includes('CAMPUS_ADMIN'))
-  
+
   const roleLabel = computed(() => {
     if (isSuperAdmin.value) return '平台超级管理员'
     if (isSchoolAdmin.value) return '学校管理员'
     if (isCampusAdmin.value) return '校区管理员'
     return '后台管理员'
   })
-  
+
   const canSelectSchool = computed(() => isSuperAdmin.value)
   const canSelectCampus = computed(() => isSuperAdmin.value || isSchoolAdmin.value)
-  
+
   const effectiveSchoolCode = computed(() => {
     if (!canSelectSchool.value) {
       return userStore.userInfo?.schoolCode || ''
     }
     return filterSchoolCode.value
   })
-  
+
   const querySchoolCode = computed(() => {
     return isSuperAdmin.value ? filterSchoolCode.value : ''
   })
-  
+
   const queryCampusCode = computed(() => {
     if (isSuperAdmin.value || isSchoolAdmin.value) {
       return filterCampusCode.value
     }
     return ''
   })
-  
+
   const pendingQuickActions = computed(() => {
     const stats = dashboardStats.value
     if (!stats) return []
@@ -466,21 +472,21 @@ export const useAdminDashboard = () => {
       { menu: 'dispute-manage' as AdminMenuId, label: '纠纷待处理', count: stats.pendingDisputes },
     ].filter((item) => item.count > 0)
   })
-  
+
   const pendingNoticeCount = computed(() => {
     return pendingQuickActions.value.reduce((sum, item) => sum + item.count, 0)
   })
-  
+
   const formatSchoolCampus = (schoolName?: string, schoolCode?: string, campusName?: string, campusCode?: string) => {
     const school = schoolName || schoolCode || '未知学校'
     const campus = campusName || campusCode || '未知校区'
     return `${school} · ${campus}`
   }
-  
+
   const isAdminMenuId = (value: string): value is AdminMenuId => {
     return Object.prototype.hasOwnProperty.call(menuPerms, value)
   }
-  
+
   const routeMenuId = computed<AdminMenuId>(() => {
     const raw = route.meta.adminMenu
     if (typeof raw === 'string' && isAdminMenuId(raw)) {
@@ -488,7 +494,7 @@ export const useAdminDashboard = () => {
     }
     return 'dashboard'
   })
-  
+
   const navigateToMenu = (menuId: AdminMenuId, replace = false) => {
     const targetPath = adminMenuRouteMap[menuId]
     if (!targetPath || route.path === targetPath) {
@@ -500,17 +506,17 @@ export const useAdminDashboard = () => {
       router.push(targetPath)
     }
   }
-  
+
   // 获取菜单徽章数量
   const getMenuBadge = (badgeKey: keyof DashboardStats | null) => {
     if (!badgeKey || !dashboardStats.value) return 0
     const badge = dashboardStats.value[badgeKey]
     return typeof badge === 'number' ? badge : 0
   }
-  
+
   const toOptionalString = (value?: string) => (value ? value : undefined)
   const toOptionalNumber = (value: number | '' | undefined) => (value === '' || value === undefined ? undefined : value)
-  
+
   const normalizeSchoolOptions = (list: SchoolInfo[]) => {
     const map = new Map<string, SchoolInfo>()
     list.forEach((item) => {
@@ -520,7 +526,7 @@ export const useAdminDashboard = () => {
     })
     return Array.from(map.values())
   }
-  
+
   const normalizeCampusOptions = (list: SchoolInfo[]) => {
     const map = new Map<string, SchoolInfo>()
     list.forEach((item) => {
@@ -530,7 +536,7 @@ export const useAdminDashboard = () => {
     })
     return Array.from(map.values())
   }
-  
+
   const loadCampuses = async (schoolCode: string, shouldReload = false) => {
     if (!schoolCode) {
       campusList.value = []
@@ -558,7 +564,7 @@ export const useAdminDashboard = () => {
       console.error(error)
     }
   }
-  
+
   const applyScopeDefaults = () => {
     if (!canSelectSchool.value) {
       filterSchoolCode.value = userStore.userInfo?.schoolCode || ''
@@ -567,7 +573,7 @@ export const useAdminDashboard = () => {
       filterCampusCode.value = userStore.userInfo?.campusCode || ''
     }
   }
-  
+
   // 获取学校列表
   const fetchSchools = async () => {
     applyScopeDefaults()
@@ -586,7 +592,7 @@ export const useAdminDashboard = () => {
       } else {
         schoolList.value = []
       }
-  
+
       if (effectiveSchoolCode.value) {
         await loadCampuses(effectiveSchoolCode.value, false)
       }
@@ -594,7 +600,7 @@ export const useAdminDashboard = () => {
       console.error(e)
     }
   }
-  
+
   // 监听学校选择变化
   const handleSchoolChange = async () => {
     if (!canSelectSchool.value) return
@@ -602,13 +608,13 @@ export const useAdminDashboard = () => {
     pagination.value.pageNum = 1
     await loadCampuses(filterSchoolCode.value, true)
   }
-  
+
   const handleCampusChange = () => {
     if (isCampusAdmin.value) return
     pagination.value.pageNum = 1
     loadData()
   }
-  
+
   const parsePositiveInt = (raw: string): number | null => {
     const value = Number(raw)
     if (!Number.isInteger(value) || value <= 0) {
@@ -616,7 +622,7 @@ export const useAdminDashboard = () => {
     }
     return value
   }
-  
+
   const parseEnumQueryValue = <T extends string>(
     raw: unknown,
     allowedValues: readonly T[],
@@ -628,21 +634,21 @@ export const useAdminDashboard = () => {
     }
     return defaultValue
   }
-  
+
   const currentPage = computed({
     get: () => pagination.value.pageNum,
     set: (value: number) => {
       pagination.value.pageNum = value
     },
   })
-  
+
   const currentPageSize = computed({
     get: () => pagination.value.pageSize,
     set: (value: number) => {
       pagination.value.pageSize = value
     },
   })
-  
+
   useListQuerySync([
     createQueryBinding({
       key: 'page',
@@ -671,6 +677,13 @@ export const useAdminDashboard = () => {
       key: 'campusCode',
       state: filterCampusCode,
       defaultValue: '',
+    }),
+    createQueryBinding({
+      key: 'disputeTargetType',
+      state: disputeTargetTypeFilter,
+      defaultValue: '',
+      parse: raw => parseOptionalEnumQueryNumber(raw, [0, 1]) ?? '',
+      serialize: value => (value === '' || value === undefined ? undefined : String(value)),
     }),
     createQueryBinding({
       key: 'riskTab',
@@ -745,11 +758,11 @@ export const useAdminDashboard = () => {
       loadData()
     },
   })
-  
+
   watch(behaviorTargetUserId, (value) => {
     behaviorUserIdInput.value = value ? String(value) : ''
   }, { immediate: true })
-  
+
   watch(iamTargetUserId, (value) => {
     iamUserIdInput.value = value ? String(value) : ''
   }, { immediate: true })
@@ -762,18 +775,18 @@ export const useAdminDashboard = () => {
   const canManageRiskRule = computed(() => hasPermission(userStore.userInfo, 'risk:rule:manage'))
   const canViewBehaviorControl = computed(() => hasPermission(userStore.userInfo, 'admin:risk:behavior:view'))
   const canManageBehaviorControl = computed(() => hasPermission(userStore.userInfo, 'admin:risk:behavior:manage'))
-  
+
   const canViewIamRole = computed(() => hasPermission(userStore.userInfo, 'admin:iam:role:view'))
   const canViewIamUserRole = computed(() => hasPermission(userStore.userInfo, 'admin:iam:user-role:view'))
   const canManageIamUserRole = computed(() => hasPermission(userStore.userInfo, 'admin:iam:user-role:manage'))
   const canViewIamScope = computed(() => hasPermission(userStore.userInfo, 'admin:iam:scope:view'))
   const canManageIamScope = computed(() => hasPermission(userStore.userInfo, 'admin:iam:scope:manage'))
-  
+
   const canViewOperationAudit = computed(() => hasPermission(userStore.userInfo, 'admin:audit:operation:view'))
   const canViewPermissionAudit = computed(() => hasPermission(userStore.userInfo, 'admin:audit:permission:view'))
   const canViewLoginAudit = computed(() => hasPermission(userStore.userInfo, 'admin:audit:login:view'))
   const canAuditErrand = computed(() => hasPermission(userStore.userInfo, 'admin:errand:audit'))
-  
+
   const hasRiskTabAccess = (tab: 'mode' | 'events' | 'cases' | 'rules' | 'behavior' | 'blacklist' | 'whitelist') => {
     if (tab === 'mode') return canViewRiskMode.value
     if (tab === 'events') return canViewRiskEvents.value
@@ -782,13 +795,13 @@ export const useAdminDashboard = () => {
     if (tab === 'behavior') return canViewBehaviorControl.value
     return canViewRiskList.value
   }
-  
+
   const hasAuditTabAccess = (tab: 'operations' | 'permission' | 'login') => {
     if (tab === 'operations') return canViewOperationAudit.value
     if (tab === 'permission') return canViewPermissionAudit.value
     return canViewLoginAudit.value
   }
-  
+
   const normalizeRiskDateTimeParam = (value: string): string | undefined => {
     const trimmed = value.trim()
     if (!trimmed) return undefined
@@ -797,18 +810,18 @@ export const useAdminDashboard = () => {
     }
     return trimmed
   }
-  
+
   const buildRiskTimeRangeParams = (showWarning = false): { startTime?: string; endTime?: string } | null => {
     const startTime = normalizeRiskDateTimeParam(riskStartTimeFilter.value)
     const endTime = normalizeRiskDateTimeParam(riskEndTimeFilter.value)
-  
+
     if (!startTime && !endTime) {
       return {}
     }
-  
+
     const startTs = startTime ? Date.parse(startTime) : NaN
     const endTs = endTime ? Date.parse(endTime) : NaN
-  
+
     if (startTime && Number.isNaN(startTs)) {
       if (showWarning) ElMessage.warning('开始时间格式不正确')
       return null
@@ -821,10 +834,10 @@ export const useAdminDashboard = () => {
       if (showWarning) ElMessage.warning('开始时间不能晚于结束时间')
       return null
     }
-  
+
     return { startTime, endTime }
   }
-  
+
   const ensureRiskTab = () => {
     const orderedTabs: Array<'mode' | 'events' | 'cases' | 'rules' | 'behavior' | 'blacklist' | 'whitelist'> = ['mode', 'events', 'cases', 'rules', 'behavior', 'blacklist', 'whitelist']
     const firstAllowed = orderedTabs.find((tab) => hasRiskTabAccess(tab))
@@ -835,7 +848,7 @@ export const useAdminDashboard = () => {
       riskTab.value = firstAllowed
     }
   }
-  
+
   const ensureAuditTab = () => {
     const orderedTabs: Array<'operations' | 'permission' | 'login'> = ['operations', 'permission', 'login']
     const firstAllowed = orderedTabs.find((tab) => hasAuditTabAccess(tab))
@@ -846,7 +859,7 @@ export const useAdminDashboard = () => {
       auditTab.value = firstAllowed
     }
   }
-  
+
   const hasMenuAccess = (menuId: string) => {
     const perms = menuPerms[menuId as AdminMenuId]
     if (!perms) {
@@ -854,17 +867,17 @@ export const useAdminDashboard = () => {
     }
     return hasAnyPermission(userStore.userInfo, perms)
   }
-  
+
   const ensureActiveMenu = () => {
     if (visibleMenus.value.length === 0) {
       return
     }
-  
+
     const routeMenu = routeMenuId.value
     if (hasMenuAccess(routeMenu)) {
       activeMenu.value = routeMenu
     }
-  
+
     if (!visibleMenus.value.some((menu) => menu.id === activeMenu.value)) {
       const firstMenu = visibleMenus.value[0]
       if (firstMenu) {
@@ -873,7 +886,7 @@ export const useAdminDashboard = () => {
       }
     }
   }
-  
+
   const ensurePermission = (permissionCode: string): boolean => {
     if (hasPermission(userStore.userInfo, permissionCode)) {
       return true
@@ -881,7 +894,7 @@ export const useAdminDashboard = () => {
     ElMessage.warning('当前账号无此操作权限')
     return false
   }
-  
+
   // 数据加载
   const loadData = async () => {
     ensureActiveMenu()
@@ -889,14 +902,14 @@ export const useAdminDashboard = () => {
       loading.value = false
       return
     }
-  
+
     if (activeMenu.value === 'risk-center') {
       ensureRiskTab()
     }
     if (activeMenu.value === 'audit-center') {
       ensureAuditTab()
     }
-  
+
     loading.value = true
     const { pageNum, pageSize } = pagination.value
     try {
@@ -971,6 +984,7 @@ export const useAdminDashboard = () => {
           pageNum,
           pageSize,
           status: toOptionalNumber(disputeStatusFilter.value),
+          targetType: toOptionalNumber(disputeTargetTypeFilter.value),
           schoolCode: toOptionalString(querySchoolCode.value),
           campusCode: toOptionalString(queryCampusCode.value),
         })
@@ -1083,7 +1097,7 @@ export const useAdminDashboard = () => {
         } else {
           auditOverview.value = null
         }
-  
+
         if (auditTab.value === 'operations') {
           if (!canViewOperationAudit.value) {
             operationAudits.value = []
@@ -1131,25 +1145,25 @@ export const useAdminDashboard = () => {
       loading.value = false
     }
   }
-  
+
   // 分页变化
   const handlePageChange = (page: number) => {
     pagination.value.pageNum = page
     loadData()
   }
-  
+
   const handleSizeChange = (size: number) => {
     pagination.value.pageSize = size
     pagination.value.pageNum = 1
     loadData()
   }
-  
+
   // 搜索
   const handleSearch = () => {
     pagination.value.pageNum = 1
     loadData()
   }
-  
+
   const switchRiskTab = (tab: 'mode' | 'events' | 'cases' | 'rules' | 'behavior' | 'blacklist' | 'whitelist') => {
     if (!hasRiskTabAccess(tab)) {
       ElMessage.warning('当前账号无此模块权限')
@@ -1159,7 +1173,7 @@ export const useAdminDashboard = () => {
     pagination.value.pageNum = 1
     loadData()
   }
-  
+
   const handleRiskSearch = () => {
     if (!hasRiskTabAccess(riskTab.value)) {
       ElMessage.warning('当前账号无此风控模块权限')
@@ -1171,7 +1185,7 @@ export const useAdminDashboard = () => {
     pagination.value.pageNum = 1
     loadData()
   }
-  
+
   const handleUpdateRiskMode = async () => {
     if (!ensurePermission('risk:mode:manage')) {
       return
@@ -1315,7 +1329,7 @@ export const useAdminDashboard = () => {
     behaviorTargetUserId.value = userId
     loadData()
   }
-  
+
   const handleAddBehaviorControl = async () => {
     if (!ensurePermission('admin:risk:behavior:manage')) {
       return
@@ -1368,7 +1382,7 @@ export const useAdminDashboard = () => {
       }
     }
   }
-  
+
   const handleDisableBehavior = async (controlId: number) => {
     if (!ensurePermission('admin:risk:behavior:manage')) {
       return
@@ -1387,7 +1401,7 @@ export const useAdminDashboard = () => {
       }
     }
   }
-  
+
   const handleRiskCaseProcess = async (caseId: number) => {
     if (!ensurePermission('risk:case:handle')) {
       return
@@ -1435,7 +1449,7 @@ export const useAdminDashboard = () => {
       }
     }
   }
-  
+
   const handleToggleRiskRule = async (rule: RiskRuleItem) => {
     if (!ensurePermission('risk:rule:manage')) {
       return
@@ -1449,7 +1463,7 @@ export const useAdminDashboard = () => {
       ElMessage.error('切换规则状态失败')
     }
   }
-  
+
   const handleCreateRiskRule = async () => {
     if (!ensurePermission('risk:rule:manage')) {
       return
@@ -1516,7 +1530,7 @@ export const useAdminDashboard = () => {
       }
     }
   }
-  
+
   const handleIamUserQuery = () => {
     if (!canViewIamUserRole.value && !canViewIamScope.value) {
       ElMessage.warning('当前账号无IAM查询权限')
@@ -1536,7 +1550,7 @@ export const useAdminDashboard = () => {
     iamTargetUserId.value = userId
     loadData()
   }
-  
+
   const handleGrantRole = async () => {
     if (!ensurePermission('admin:iam:user-role:manage')) {
       return
@@ -1570,7 +1584,7 @@ export const useAdminDashboard = () => {
       }
     }
   }
-  
+
   const handleRevokeRole = async (bindingId: number) => {
     if (!ensurePermission('admin:iam:user-role:manage')) {
       return
@@ -1589,7 +1603,7 @@ export const useAdminDashboard = () => {
       }
     }
   }
-  
+
   const handleAddScope = async () => {
     if (!ensurePermission('admin:iam:scope:manage')) {
       return
@@ -1640,7 +1654,7 @@ export const useAdminDashboard = () => {
       }
     }
   }
-  
+
   const handleDisableScopeBinding = async (bindingId: number) => {
     if (!ensurePermission('admin:iam:scope:manage')) {
       return
@@ -1659,7 +1673,7 @@ export const useAdminDashboard = () => {
       }
     }
   }
-  
+
   const switchAuditTab = (tab: 'operations' | 'permission' | 'login') => {
     if (!hasAuditTabAccess(tab)) {
       ElMessage.warning('当前账号无此模块权限')
@@ -1669,7 +1683,7 @@ export const useAdminDashboard = () => {
     pagination.value.pageNum = 1
     loadData()
   }
-  
+
   const handleAuditSearch = () => {
     if (!hasAuditTabAccess(auditTab.value)) {
       ElMessage.warning('当前账号无此审计模块权限')
@@ -1688,27 +1702,27 @@ export const useAdminDashboard = () => {
     pagination.value.pageNum = 1
     loadData()
   }
-  
+
   // 切换菜单
   const switchMenu = (id: AdminMenuId) => {
     if (!hasMenuAccess(id)) {
       ElMessage.warning('当前账号无此模块权限')
       return
     }
-  
+
     const targetPath = adminMenuRouteMap[id]
     if (route.path !== targetPath) {
       navigateToMenu(id)
       return
     }
-  
+
     activeMenu.value = id
     pagination.value.pageNum = 1
     pagination.value.total = 0
     searchKeyword.value = ''
     loadData()
   }
-  
+
   // 退出登录
   const handleLogout = () => {
     showNoticePanel.value = false
@@ -1716,7 +1730,7 @@ export const useAdminDashboard = () => {
     userStore.logout()
     router.push('/login')
   }
-  
+
   // 返回首页
   const handleGoHome = () => {
     showNoticePanel.value = false
@@ -1731,7 +1745,7 @@ export const useAdminDashboard = () => {
       console.error('获取仪表盘统计失败', error)
     }
   }
-  
+
   // 刷新数据
   const handleRefresh = async () => {
     if (manualRefreshSpinning.value) {
@@ -1752,22 +1766,22 @@ export const useAdminDashboard = () => {
       }, remain)
     }
   }
-  
+
   const openProductDetail = (productId: number) => {
     const target = router.resolve(`/product/${productId}`)
     window.open(target.href, '_blank', 'noopener')
   }
-  
+
   const openErrandDetail = (taskId: number) => {
     const target = router.resolve(`/errand/${taskId}`)
     window.open(target.href, '_blank', 'noopener')
   }
-  
+
   const openDisputeDetail = (recordId: number) => {
     const target = router.resolve(`/dispute/${recordId}`)
     window.open(target.href, '_blank', 'noopener')
   }
-  
+
   const toggleNoticePanel = async () => {
     showAvatarPanel.value = false
     showNoticePanel.value = !showNoticePanel.value
@@ -1775,36 +1789,36 @@ export const useAdminDashboard = () => {
       await refreshDashboardStats()
     }
   }
-  
+
   const toggleAvatarPanel = () => {
     showNoticePanel.value = false
     showAvatarPanel.value = !showAvatarPanel.value
   }
-  
+
   const jumpByNotice = (menuId: AdminMenuId) => {
     showNoticePanel.value = false
     switchMenu(menuId)
   }
-  
+
   const handleQuickGotoMessage = () => {
     showNoticePanel.value = false
     router.push('/message')
   }
-  
+
   const handleQuickGotoProfile = () => {
     showAvatarPanel.value = false
     router.push('/profile')
   }
-  
+
   const handleQuickLogout = () => {
     showAvatarPanel.value = false
     handleLogout()
   }
-  
+
   const handleClickOutsidePanels = (event: MouseEvent) => {
     const target = event.target as Node | null
     if (!target) return
-  
+
     if (showNoticePanel.value && noticePanelRef.value && !noticePanelRef.value.contains(target)) {
       showNoticePanel.value = false
     }
@@ -1812,9 +1826,9 @@ export const useAdminDashboard = () => {
       showAvatarPanel.value = false
     }
   }
-  
+
   // --- 操作逻辑 ---
-  
+
   // 商品审核
   const handleAuditGoods = async (goodsId: number, status: number) => {
     if (!ensurePermission('admin:goods:audit')) {
@@ -1835,7 +1849,7 @@ export const useAdminDashboard = () => {
       endAdminAction(actionKey)
     }
   }
-  
+
   // 认证审核
   const handleAuditAuth = async (userId: number, status: number) => {
     if (!ensurePermission('admin:auth:audit')) {
@@ -1856,7 +1870,7 @@ export const useAdminDashboard = () => {
       endAdminAction(actionKey)
     }
   }
-  
+
   // 跑腿员审核
   const handleAuditRunner = async (userId: number, status: number) => {
     if (!ensurePermission('admin:runner:audit')) {
@@ -1888,7 +1902,7 @@ export const useAdminDashboard = () => {
       endAdminAction(actionKey)
     }
   }
-  
+
   // 跑腿任务复核
   const handleAuditErrand = async (taskId: number, status: number) => {
     if (!ensurePermission('admin:errand:audit')) {
@@ -1924,7 +1938,7 @@ export const useAdminDashboard = () => {
       endAdminAction(actionKey)
     }
   }
-  
+
   // 用户封禁
   const handleToggleUser = async (user: UserInfo) => {
     if (!ensurePermission('admin:user:status:update')) {
@@ -1939,7 +1953,7 @@ export const useAdminDashboard = () => {
       ElMessage.error('操作失败')
     }
   }
-  
+
   // 查看用户详情
   const handleViewUserDetail = async (userId: number) => {
     try {
@@ -1951,7 +1965,7 @@ export const useAdminDashboard = () => {
       ElMessage.error('获取用户详情失败')
     }
   }
-  
+
   // 调整信用分
   const handleAdjustCredit = async () => {
     if (!userDetailData.value) return
@@ -1977,7 +1991,7 @@ export const useAdminDashboard = () => {
       ElMessage.error('信用分调整失败')
     }
   }
-  
+
   // 系统通知广播
   const handleBroadcastNotice = async () => {
     if (!broadcastForm.value.title || !broadcastForm.value.content) {
@@ -1993,7 +2007,7 @@ export const useAdminDashboard = () => {
       ElMessage.error('广播通知失败')
     }
   }
-  
+
   // 搜索管理操作
   const handleSyncGoodsFull = async () => {
     searchOpLoading.value = true
@@ -2006,7 +2020,7 @@ export const useAdminDashboard = () => {
       searchOpLoading.value = false
     }
   }
-  
+
   const handleCreateGoodsIndex = async () => {
     searchOpLoading.value = true
     try {
@@ -2018,7 +2032,7 @@ export const useAdminDashboard = () => {
       searchOpLoading.value = false
     }
   }
-  
+
   const handleSyncErrandFull = async () => {
     searchOpLoading.value = true
     try {
@@ -2030,7 +2044,7 @@ export const useAdminDashboard = () => {
       searchOpLoading.value = false
     }
   }
-  
+
   const handleCreateErrandIndex = async () => {
     searchOpLoading.value = true
     try {
@@ -2042,7 +2056,7 @@ export const useAdminDashboard = () => {
       searchOpLoading.value = false
     }
   }
-  
+
   // 强制下架商品
   const handleForceOffline = async (goodsId: number) => {
     if (!ensurePermission('admin:goods:offline')) {
@@ -2063,7 +2077,7 @@ export const useAdminDashboard = () => {
       }
     }
   }
-  
+
   const closeDisputeHandleDialog = () => {
     showDisputeHandleDialog.value = false
     disputeHandleDialogLoading.value = false
@@ -2172,13 +2186,13 @@ export const useAdminDashboard = () => {
       disputeHandleSubmitting.value = false
     }
   }
-  
+
   // 当前时间
   const currentTime = ref(new Date())
   const clockTimer = window.setInterval(() => {
     currentTime.value = new Date()
   }, 1000)
-  
+
   const formattedTime = computed(() => {
     return currentTime.value.toLocaleString('zh-CN', {
       year: 'numeric',
@@ -2190,35 +2204,35 @@ export const useAdminDashboard = () => {
       hour12: false
     })
   })
-  
+
   onMounted(() => {
     ensureActiveMenu()
     ensureRiskTab()
     ensureAuditTab()
     document.addEventListener('click', handleClickOutsidePanels)
     fetchSchools()
-  
+
     const expectedPath = adminMenuRouteMap[activeMenu.value]
     if (route.path !== expectedPath) {
       navigateToMenu(activeMenu.value, true)
       return
     }
-  
+
     loadData()
   })
-  
+
   watch(routeMenuId, (nextMenu, prevMenu) => {
     showNoticePanel.value = false
     showAvatarPanel.value = false
     if (nextMenu === prevMenu) {
       return
     }
-  
+
     if (!hasMenuAccess(nextMenu)) {
       ensureActiveMenu()
       return
     }
-  
+
     activeMenu.value = nextMenu
     if (Object.keys(route.query).length === 0) {
       pagination.value.pageNum = 1
@@ -2227,21 +2241,21 @@ export const useAdminDashboard = () => {
     pagination.value.total = 0
     loadData()
   })
-  
+
   watch(visibleMenus, (nextMenus, prevMenus) => {
     ensureActiveMenu()
-  
+
     const expectedPath = adminMenuRouteMap[activeMenu.value]
     if (nextMenus.length > 0 && route.path !== expectedPath) {
       navigateToMenu(activeMenu.value, true)
       return
     }
-  
+
     if (prevMenus.length === 0 && nextMenus.length > 0 && route.path === expectedPath) {
       loadData()
     }
   })
-  
+
   onBeforeUnmount(() => {
     document.removeEventListener('click', handleClickOutsidePanels)
     window.clearInterval(clockTimer)
@@ -2292,6 +2306,7 @@ export const useAdminDashboard = () => {
     errandStatusFilter,
     errandReviewStatusFilter,
     disputeStatusFilter,
+    disputeTargetTypeFilter,
     schoolList,
     campusList,
 

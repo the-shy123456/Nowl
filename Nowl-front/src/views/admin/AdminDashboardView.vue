@@ -42,6 +42,7 @@ const {
   errandStatusFilter,
   errandReviewStatusFilter,
   disputeStatusFilter,
+  disputeTargetTypeFilter,
   schoolList,
   campusList,
   showNoticePanel,
@@ -645,6 +646,7 @@ const {
             v-model:filter-school-code="filterSchoolCode"
             v-model:filter-campus-code="filterCampusCode"
             v-model:dispute-status-filter="disputeStatusFilter"
+            v-model:dispute-target-type-filter="disputeTargetTypeFilter"
             :school-list="schoolList"
             :campus-list="campusList"
             :can-select-school="canSelectSchool"

@@ -68,6 +68,8 @@ export interface AdminErrandItem {
 
 export interface AdminDisputeItem {
   recordId: number
+  contentId: number
+  targetType: number
   initiatorAvatar?: string
   initiatorName?: string
   relatedAvatar?: string
@@ -157,7 +159,9 @@ export const forceOfflineGoods = (params: { goodsId: number; reason?: string }) 
 }
 
 // 获取纠纷列表
-export const getDisputeList = (params: PageQuery & { status?: number; schoolCode?: string; campusCode?: string }) => {
+export const getDisputeList = (
+  params: PageQuery & { status?: number; targetType?: number; schoolCode?: string; campusCode?: string },
+) => {
   return request.get<PageResult<AdminDisputeItem>>(ADMIN_API.DISPUTE_LIST, { params })
 }
 
