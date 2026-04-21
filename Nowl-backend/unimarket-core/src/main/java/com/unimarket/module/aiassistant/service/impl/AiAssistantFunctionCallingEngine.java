@@ -5,7 +5,7 @@ import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import com.unimarket.ai.service.AiChatService;
 import com.unimarket.ai.vo.AiChatResponseVO;
-import com.unimarket.ai.vo.AiGoodsCardVO;
+import com.unimarket.module.aiassistant.model.AiChatQueryContext;
 import com.unimarket.module.aiassistant.service.AiChatHistoryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,10 +15,12 @@ import org.springframework.ai.model.function.FunctionCallbackWrapper;
 import java.math.BigDecimal;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * AI 函数调用编排：
- * - 让模型输出结构化 JSON（intent/keyword/replyText）
+ * - 由模型自主判断是否调用工具，并自行提取工具入参
+ * - 最终让模型输出结构化 JSON（intent/keyword/replyText/limit/maxPrice/page）
  * - cards 一律由服务端实时查询填充，严禁信任模型编造内容
  */
 @Slf4j
@@ -34,24 +36,34 @@ final class AiAssistantFunctionCallingEngine {
             - cheapest_goods：查询关键词最低价商品
             - recommend_goods：按关键词推荐商品
 
+            【上下文补充】
+            %s
+
             【核心规则——严禁编造】
-            1. 当用户询问商品相关问题（搜索、推荐、最低价等）时，你 **必须先调用对应的工具** 获取数据。
-            2. **严禁凭空编造任何商品的名称、价格、卖家等信息。** 所有商品相关描述必须基于工具返回的实际数据。
-            3. 如果工具返回 0 条结果，你必须如实告知用户“暂未找到相关商品”，绝不可自行捏造。
-            4. 非商品类问题可直接回答，不调用工具。
+            1. 你要自己判断当前是否需要调用工具，并自己从用户原话里提取 keyword、limit、maxPrice、page。
+            2. 当用户询问商品相关问题（搜索、推荐、最低价等）时，你 **必须先调用对应的工具** 获取数据。
+            3. 像“推荐200块钱以内的键盘一下”这种表达里，keyword 应该是“键盘”，“一下/吧/吗”只是语气词，不能当关键词。
+            4. 如果上下文里的 switchBatch=true，表示前端已经把“换一批”所需的下一页 page 和上一次查询条件带过来了；除非用户明确提出了新条件，否则优先沿用上下文里的 keyword、limit、maxPrice、page。
+            5. **严禁凭空编造任何商品的名称、价格、卖家等信息。** 所有商品相关描述必须基于工具返回的实际数据。
+            6. 如果工具返回 0 条结果，你必须如实告知用户“暂未找到相关商品”，绝不可自行捏造。
+            7. 非商品类问题可直接回答，不调用工具。
 
             【输出格式】
             最终输出必须是严格 JSON（不要 Markdown、不要代码块、不要额外解释）：
             {
               "replyText": "基于工具返回数据撰写的回复文案",
               "intent": "general|search|cheapest|recommend",
-              "keyword": "关键词或null"
+              "keyword": "关键词或null",
+              "limit": 1-10 或 null,
+              "maxPrice": 数字或 null,
+              "page": 大于等于0的整数或 null
             }
 
             【注意事项】
-            - **不要在 JSON 中包含 cards 字段**，商品卡片由系统自动填充，你只需要输出上面三个字段。
+            - **不要在 JSON 中包含 cards 字段**，商品卡片由系统自动填充，你只需要输出上面六个字段。
             - replyText 中可以概括工具返回的商品数量、价格范围等信息，但不要逐条列举商品详情。
-            - general 场景 keyword 返回 null。
+            - general 场景 keyword、limit、maxPrice、page 都返回 null。
+            - 对 search/cheapest/recommend 场景，intent/keyword/limit/maxPrice/page 需要与最终使用的查询条件保持一致。
             - 对 search/cheapest/recommend 场景，不允许输出"正在查询/正在查找/稍后返回"这类占位文案，必须直接给最终结果。
             """;
 
@@ -64,15 +76,21 @@ final class AiAssistantFunctionCallingEngine {
             String schoolCode,
             String campusCode,
             String message,
-            QueryIntent requestIntent,
-            QueryConstraints constraints
+            AiChatQueryContext queryContext,
+            boolean switchBatchRequest
     ) {
         String historyContext = aiChatHistoryService.getRecentContext(userId, HISTORY_CONTEXT_LIMIT);
         List<FunctionCallback> callbacks = buildGoodsFunctionCallbacks(schoolCode, campusCode);
+        QueryIntent contextIntent = AiAssistantQuerySupport.resolveContextIntent(queryContext);
+        QueryConstraints contextConstraints = AiAssistantQuerySupport.resolveContextConstraints(
+                queryContext,
+                contextIntent,
+                switchBatchRequest
+        );
         String rawResponse = aiChatService.chatWithFunctions(
                 StrUtil.blankToDefault(message, "你好"),
                 historyContext,
-                GOODS_FUNCTION_CALL_PROMPT,
+                buildFunctionCallingPrompt(queryContext, switchBatchRequest),
                 callbacks
         );
 
@@ -82,20 +100,38 @@ final class AiAssistantFunctionCallingEngine {
         }
 
         QueryIntent responseIntent = QueryIntent.parseCode(response.getIntent());
-        if (responseIntent != null && responseIntent != QueryIntent.GENERAL) {
-            String keyword = AiAssistantTextSupport.cleanupKeyword(StrUtil.blankToDefault(response.getKeyword(), constraints.keyword));
-            int limit = AiAssistantQuerySupport.resolveToolLimit(constraints.limit, AiAssistantQuerySupport.getDefaultLimit(responseIntent));
-            int page = AiAssistantQuerySupport.resolveQueryPage(constraints.page);
-            BigDecimal maxPrice = AiAssistantQuerySupport.normalizeMaxPrice(constraints.maxPrice);
+        QueryIntent effectiveIntent = responseIntent == null
+                ? (contextIntent == null ? QueryIntent.GENERAL : contextIntent)
+                : responseIntent;
+        response.setIntent(effectiveIntent.toCode());
+
+        if (effectiveIntent != QueryIntent.GENERAL) {
+            QueryConstraints resolved = AiAssistantQuerySupport.resolveResponseConstraints(
+                    effectiveIntent,
+                    response,
+                    contextConstraints
+            );
             QuerySnapshot snapshot = goodsQueryEngine.queryWithFallback(
-                    responseIntent, schoolCode, campusCode, keyword, limit, maxPrice, page);
-            QueryConstraints resolved = new QueryConstraints(keyword, limit, maxPrice, page);
+                    effectiveIntent,
+                    schoolCode,
+                    campusCode,
+                    resolved.keyword,
+                    resolved.limit,
+                    resolved.maxPrice,
+                    resolved.page
+            );
             response.setCards(snapshot.cards);
-            response.setKeyword(keyword);
+            response.setKeyword(resolved.keyword);
             AiAssistantQuerySupport.applyQueryMetadata(response, snapshot, resolved);
         }
 
-        return goodsQueryEngine.ensureResolvedQueryResponse(response, requestIntent, schoolCode, campusCode, constraints);
+        return goodsQueryEngine.ensureResolvedQueryResponse(
+                response,
+                contextIntent,
+                schoolCode,
+                campusCode,
+                contextConstraints
+        );
     }
 
     private List<FunctionCallback> buildGoodsFunctionCallbacks(String schoolCode, String campusCode) {
@@ -187,6 +223,9 @@ final class AiAssistantFunctionCallingEngine {
             response.setCards(Collections.emptyList());
             response.setIntent(normalizeIntentCode(data.getStr("intent")));
             response.setKeyword(AiAssistantTextSupport.cleanupKeyword(data.getStr("keyword")));
+            response.setQueryLimit(normalizeNullableLimit(data.getInt("limit")));
+            response.setQueryPage(normalizeNullablePage(data.getInt("page")));
+            response.setMaxPrice(parseNullableMaxPrice(data.get("maxPrice")));
             return response;
         } catch (Exception ex) {
             log.debug("解析函数调用返回失败，降级到规则推断: {}", ex.getMessage());
@@ -212,5 +251,73 @@ final class AiAssistantFunctionCallingEngine {
         QueryIntent parsed = QueryIntent.parseCode(rawIntent);
         return parsed == null ? QueryIntent.GENERAL.toCode() : parsed.toCode();
     }
-}
 
+    private String buildFunctionCallingPrompt(AiChatQueryContext queryContext, boolean switchBatchRequest) {
+        return GOODS_FUNCTION_CALL_PROMPT.formatted(buildRuntimeContextPrompt(queryContext, switchBatchRequest));
+    }
+
+    private String buildRuntimeContextPrompt(AiChatQueryContext queryContext, boolean switchBatchRequest) {
+        if (queryContext == null) {
+            return switchBatchRequest
+                    ? "switchBatch=true，但当前没有可复用的上一轮查询上下文；如果历史消息也无法明确上一轮条件，请直接让用户补充关键词。"
+                    : "当前没有额外的查询上下文。";
+        }
+
+        return """
+                - previousIntent: %s
+                - previousKeyword: %s
+                - previousLimit: %s
+                - previousMaxPrice: %s
+                - previousPage: %s
+                - switchBatch: %s
+                """.formatted(
+                safeContextValue(queryContext.getIntent()),
+                safeContextValue(queryContext.getKeyword()),
+                safeContextValue(queryContext.getLimit()),
+                safeContextValue(queryContext.getMaxPrice() == null ? null : queryContext.getMaxPrice().stripTrailingZeros().toPlainString()),
+                safeContextValue(queryContext.getPage()),
+                switchBatchRequest
+        ).trim();
+    }
+
+    private String safeContextValue(Object value) {
+        if (value == null) {
+            return "null";
+        }
+        String text = Objects.toString(value, "").trim();
+        return text.isEmpty() ? "null" : text;
+    }
+
+    private Integer normalizeNullableLimit(Integer limit) {
+        if (limit == null || limit <= 0) {
+            return null;
+        }
+        return Math.min(limit, AiAssistantQuerySupport.TOOL_CARD_MAX_LIMIT);
+    }
+
+    private Integer normalizeNullablePage(Integer page) {
+        if (page == null || page < 0) {
+            return null;
+        }
+        return page;
+    }
+
+    private BigDecimal parseNullableMaxPrice(Object rawValue) {
+        if (rawValue == null) {
+            return null;
+        }
+
+        String text = Objects.toString(rawValue, "").trim();
+        if (text.isEmpty() || "null".equalsIgnoreCase(text)) {
+            return null;
+        }
+
+        try {
+            BigDecimal value = new BigDecimal(text);
+            return value.compareTo(BigDecimal.ZERO) > 0 ? value : null;
+        } catch (Exception ex) {
+            log.debug("解析模型返回的 maxPrice 失败，忽略该字段: {}", ex.getMessage());
+            return null;
+        }
+    }
+}

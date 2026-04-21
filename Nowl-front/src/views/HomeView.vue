@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import logoSvg from '@/assets/logo.svg'
@@ -311,112 +311,114 @@ watch(
       </div>
 
       <div v-else class="recommend-marquee">
-        <div class="recommend-row">
-          <div class="recommend-track move-right">
-            <div class="recommend-group">
-              <article
-                v-for="item in topRecommendGoods"
-                :key="`top-a-${item.productId}`"
-                class="recommend-card"
-                @click="handleRecommendClick(item)"
-              >
-                <div class="recommend-cover">
-                  <img v-if="item.image" :src="item.image" :alt="item.title" loading="lazy" />
-                  <div v-else class="recommend-placeholder">
-                    <img :src="logoSvg" alt="" />
-                  </div>
-                  <span class="recommend-type">{{ getRecommendBadge(item.recommendType) }}</span>
-                </div>
-                <div class="recommend-body">
-                  <h3>{{ item.title }}</h3>
-                  <p class="recommend-category">{{ item.categoryName || '校园精选好物' }}</p>
-                  <div class="recommend-meta">
-                    <span class="price">¥{{ formatPrice(item.price) }}</span>
-                    <span class="seller">{{ item.sellerName || 'Nowl同学' }}</span>
-                  </div>
-                </div>
-              </article>
+  <div class="recommend-row">
+    <div class="recommend-track move-right">
+      <div class="recommend-group">
+        <article
+          v-for="item in topRecommendGoods"
+          :key="`top-a-${item.productId}`"
+          class="recommend-card"
+          @click="handleRecommendClick(item)"
+        >
+          <div class="recommend-cover">
+            <img v-if="item.image" :src="item.image" :alt="item.title" loading="lazy" />
+            <div v-else class="recommend-placeholder">
+              <img :src="logoSvg" alt="" />
             </div>
-
-            <div class="recommend-group" aria-hidden="true">
-              <article
-                v-for="item in topRecommendGoods"
-                :key="`top-b-${item.productId}`"
-                class="recommend-card"
-              >
-                <div class="recommend-cover">
-                  <img v-if="item.image" :src="item.image" :alt="item.title" loading="lazy" />
-                  <div v-else class="recommend-placeholder">
-                    <img :src="logoSvg" alt="" />
-                  </div>
-                  <span class="recommend-type">{{ getRecommendBadge(item.recommendType) }}</span>
-                </div>
-                <div class="recommend-body">
-                  <h3>{{ item.title }}</h3>
-                  <p class="recommend-category">{{ item.categoryName || '校园精选好物' }}</p>
-                  <div class="recommend-meta">
-                    <span class="price">¥{{ formatPrice(item.price) }}</span>
-                    <span class="seller">{{ item.sellerName || 'Nowl同学' }}</span>
-                  </div>
-                </div>
-              </article>
+            <span class="recommend-type">{{ getRecommendBadge(item.recommendType) }}</span>
+          </div>
+          <div class="recommend-body">
+            <h3>{{ item.title }}</h3>
+            <p class="recommend-category">{{ item.categoryName || '校园精选好物' }}</p>
+            <div class="recommend-meta">
+              <span class="price">¥{{ formatPrice(item.price) }}</span>
+              <span class="seller">{{ item.sellerName || 'Nowl同学' }}</span>
             </div>
           </div>
-        </div>
-
-        <div class="recommend-row">
-          <div class="recommend-track move-left">
-            <div class="recommend-group">
-              <article
-                v-for="item in bottomRecommendGoods"
-                :key="`bottom-a-${item.productId}`"
-                class="recommend-card"
-                @click="handleRecommendClick(item)"
-              >
-                <div class="recommend-cover">
-                  <img v-if="item.image" :src="item.image" :alt="item.title" loading="lazy" />
-                  <div v-else class="recommend-placeholder">
-                    <img :src="logoSvg" alt="" />
-                  </div>
-                  <span class="recommend-type">{{ getRecommendBadge(item.recommendType) }}</span>
-                </div>
-                <div class="recommend-body">
-                  <h3>{{ item.title }}</h3>
-                  <p class="recommend-category">{{ item.categoryName || '校园精选好物' }}</p>
-                  <div class="recommend-meta">
-                    <span class="price">¥{{ formatPrice(item.price) }}</span>
-                    <span class="seller">{{ item.sellerName || 'Nowl同学' }}</span>
-                  </div>
-                </div>
-              </article>
-            </div>
-
-            <div class="recommend-group" aria-hidden="true">
-              <article
-                v-for="item in bottomRecommendGoods"
-                :key="`bottom-b-${item.productId}`"
-                class="recommend-card"
-              >
-                <div class="recommend-cover">
-                  <img v-if="item.image" :src="item.image" :alt="item.title" loading="lazy" />
-                  <div v-else class="recommend-placeholder">
-                    <img :src="logoSvg" alt="" />
-                  </div>
-                  <span class="recommend-type">{{ getRecommendBadge(item.recommendType) }}</span>
-                </div>
-                <div class="recommend-body">
-                  <h3>{{ item.title }}</h3>
-                  <p class="recommend-category">{{ item.categoryName || '校园精选好物' }}</p>
-                  <div class="recommend-meta">
-                    <span class="price">¥{{ formatPrice(item.price) }}</span>
-                    <span class="seller">{{ item.sellerName || 'Nowl同学' }}</span>
-                  </div>
-                </div>
-              </article>
-            </div>
-          </div>
-        </div>
+        </article>
       </div>
+
+      <div class="recommend-group" aria-hidden="true">
+        <article
+          v-for="item in topRecommendGoods"
+          :key="`top-b-${item.productId}`"
+          class="recommend-card"
+          @click="handleRecommendClick(item)"
+        >
+          <div class="recommend-cover">
+            <img v-if="item.image" :src="item.image" :alt="item.title" loading="lazy" />
+            <div v-else class="recommend-placeholder">
+              <img :src="logoSvg" alt="" />
+            </div>
+            <span class="recommend-type">{{ getRecommendBadge(item.recommendType) }}</span>
+          </div>
+          <div class="recommend-body">
+            <h3>{{ item.title }}</h3>
+            <p class="recommend-category">{{ item.categoryName || '校园精选好物' }}</p>
+            <div class="recommend-meta">
+              <span class="price">¥{{ formatPrice(item.price) }}</span>
+              <span class="seller">{{ item.sellerName || 'Nowl同学' }}</span>
+            </div>
+          </div>
+        </article>
+      </div>
+    </div>
+  </div>
+
+  <div class="recommend-row">
+    <div class="recommend-track move-left">
+      <div class="recommend-group">
+        <article
+          v-for="item in bottomRecommendGoods"
+          :key="`bottom-a-${item.productId}`"
+          class="recommend-card"
+          @click="handleRecommendClick(item)"
+        >
+          <div class="recommend-cover">
+            <img v-if="item.image" :src="item.image" :alt="item.title" loading="lazy" />
+            <div v-else class="recommend-placeholder">
+              <img :src="logoSvg" alt="" />
+            </div>
+            <span class="recommend-type">{{ getRecommendBadge(item.recommendType) }}</span>
+          </div>
+          <div class="recommend-body">
+            <h3>{{ item.title }}</h3>
+            <p class="recommend-category">{{ item.categoryName || '校园精选好物' }}</p>
+            <div class="recommend-meta">
+              <span class="price">¥{{ formatPrice(item.price) }}</span>
+              <span class="seller">{{ item.sellerName || 'Nowl同学' }}</span>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <div class="recommend-group" aria-hidden="true">
+        <article
+          v-for="item in bottomRecommendGoods"
+          :key="`bottom-b-${item.productId}`"
+          class="recommend-card"
+          @click="handleRecommendClick(item)"
+        >
+          <div class="recommend-cover">
+            <img v-if="item.image" :src="item.image" :alt="item.title" loading="lazy" />
+            <div v-else class="recommend-placeholder">
+              <img :src="logoSvg" alt="" />
+            </div>
+            <span class="recommend-type">{{ getRecommendBadge(item.recommendType) }}</span>
+          </div>
+          <div class="recommend-body">
+            <h3>{{ item.title }}</h3>
+            <p class="recommend-category">{{ item.categoryName || '校园精选好物' }}</p>
+            <div class="recommend-meta">
+              <span class="price">¥{{ formatPrice(item.price) }}</span>
+              <span class="seller">{{ item.sellerName || 'Nowl同学' }}</span>
+            </div>
+          </div>
+        </article>
+      </div>
+    </div>
+  </div>
+</div>
     </section>
 
     <section class="runner-section">

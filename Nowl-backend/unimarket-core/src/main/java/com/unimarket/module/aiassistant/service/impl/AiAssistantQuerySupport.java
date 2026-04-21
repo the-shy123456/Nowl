@@ -45,6 +45,35 @@ final class AiAssistantQuerySupport {
         return maxPrice;
     }
 
+    static QueryIntent resolveContextIntent(AiChatQueryContext queryContext) {
+        return QueryIntent.parseCode(queryContext == null ? null : queryContext.getIntent());
+    }
+
+    static QueryConstraints resolveContextConstraints(
+            AiChatQueryContext queryContext,
+            QueryIntent intent,
+            boolean switchBatchRequest
+    ) {
+        QueryIntent effectiveIntent = intent == null ? QueryIntent.GENERAL : intent;
+        String keyword = AiAssistantTextSupport.cleanupKeyword(queryContext == null ? null : queryContext.getKeyword());
+        Integer contextLimit = queryContext == null ? null : queryContext.getLimit();
+        BigDecimal contextMaxPrice = queryContext == null ? null : queryContext.getMaxPrice();
+        int limit = resolveToolLimit(contextLimit, getDefaultLimit(effectiveIntent));
+        if (effectiveIntent == QueryIntent.CHEAPEST) {
+            limit = CHEAPEST_CARD_LIMIT;
+        }
+        int page = switchBatchRequest
+                ? resolveQueryPage(queryContext == null ? null : queryContext.getPage())
+                : 0;
+
+        return new QueryConstraints(
+                keyword,
+                limit,
+                normalizeMaxPrice(contextMaxPrice),
+                page
+        );
+    }
+
     static QueryConstraints resolveConstraintsByIntent(
             QueryIntent intent,
             QueryConstraints base,
@@ -64,24 +93,19 @@ final class AiAssistantQuerySupport {
         return new QueryConstraints(keyword, limit, maxPrice, page);
     }
 
-    static QueryConstraints resolveQueryConstraints(
+    static QueryConstraints resolveFallbackConstraints(
             String message,
             QueryIntent intent,
             AiChatQueryContext queryContext,
             boolean switchBatchRequest
     ) {
         String contextKeyword = queryContext == null ? null : AiAssistantTextSupport.cleanupKeyword(queryContext.getKeyword());
-        String extractedKeyword = AiAssistantTextSupport.extractKeyword(message, intent);
-        String keyword = StrUtil.blankToDefault(contextKeyword, extractedKeyword);
+        String fallbackKeyword = AiAssistantTextSupport.resolveFallbackKeyword(message, intent);
+        String keyword = StrUtil.blankToDefault(contextKeyword, fallbackKeyword);
         keyword = AiAssistantTextSupport.cleanupKeyword(keyword);
 
         Integer contextLimit = queryContext == null ? null : queryContext.getLimit();
-        Integer requestedLimit = AiAssistantTextSupport.extractRequestedLimit(message, intent);
-        int defaultLimit = getDefaultLimit(intent);
-        int limit = resolveToolLimit(
-                requestedLimit != null ? requestedLimit : contextLimit,
-                defaultLimit
-        );
+        int limit = resolveToolLimit(contextLimit, getDefaultLimit(intent));
         if (intent == QueryIntent.CHEAPEST) {
             limit = CHEAPEST_CARD_LIMIT;
         }
@@ -95,6 +119,34 @@ final class AiAssistantQuerySupport {
                 : 0;
 
         return new QueryConstraints(keyword, limit, maxPrice, page);
+    }
+
+    static QueryConstraints resolveResponseConstraints(
+            QueryIntent intent,
+            AiChatResponseVO response,
+            QueryConstraints fallback
+    ) {
+        QueryIntent effectiveIntent = intent == null ? QueryIntent.GENERAL : intent;
+        String fallbackKeyword = fallback == null ? null : fallback.keyword;
+        Integer fallbackLimit = fallback == null ? null : fallback.limit;
+        Integer fallbackPage = fallback == null ? null : fallback.page;
+        BigDecimal fallbackMaxPrice = fallback == null ? null : fallback.maxPrice;
+
+        String keyword = AiAssistantTextSupport.cleanupKeyword(StrUtil.blankToDefault(
+                response == null ? null : response.getKeyword(),
+                fallbackKeyword
+        ));
+        Integer limit = response == null ? null : response.getQueryLimit();
+        Integer page = response == null ? null : response.getQueryPage();
+        BigDecimal maxPrice = response == null ? null : response.getMaxPrice();
+
+        QueryConstraints base = new QueryConstraints(
+                keyword,
+                resolveToolLimit(limit != null ? limit : fallbackLimit, getDefaultLimit(effectiveIntent)),
+                normalizeMaxPrice(maxPrice != null ? maxPrice : fallbackMaxPrice),
+                resolveQueryPage(page != null ? page : fallbackPage)
+        );
+        return resolveConstraintsByIntent(effectiveIntent, base, keyword);
     }
 
     static void applyQueryMetadata(AiChatResponseVO response, QuerySnapshot snapshot, QueryConstraints constraints) {
@@ -131,4 +183,3 @@ final class AiAssistantQuerySupport {
         return price.stripTrailingZeros().toPlainString();
     }
 }
-

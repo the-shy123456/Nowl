@@ -12,30 +12,21 @@ import java.util.regex.Pattern;
 @Slf4j
 final class AiAssistantTextSupport {
 
-    private static final Pattern CHEAPEST_KEYWORD_PATTERN =
-            Pattern.compile("(?:最便宜|最低价|最划算)的?(.+?)(?:多少钱|什么价|价格|有吗|有没有|吗|呢|\\?|？|$)");
-    private static final Pattern HAS_GOODS_PATTERN =
-            Pattern.compile("(?:有没有人发布|有人发布|有人卖|有没有|有无)(.+?)(?:吗|呢|\\?|？|$)");
-    private static final Pattern SEARCH_KEYWORD_PATTERN =
-            Pattern.compile("(?:帮我找|帮我搜|找一下|搜索|查询|找|搜|想买|想要)(.+?)(?:吗|呢|吧|\\?|？|$)");
-    private static final Pattern RECOMMEND_KEYWORD_PATTERN =
-            Pattern.compile("(?:推荐|给我推荐|帮我推荐|推荐一下)(.+?)(?:吗|呢|吧|\\?|？|$)");
-    private static final Pattern QUANTITY_PATTERN =
-            Pattern.compile("(\\d{1,2})\\s*(个|款|件|条|样)");
-    private static final Pattern CHINESE_QUANTITY_PATTERN =
-            Pattern.compile("([零一二三四五六七八九十两俩]{1,3})\\s*(个|款|件|条|样)");
     private static final Pattern PRICE_LIMIT_PATTERN_A =
             Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*(?:块|快|元|rmb|￥|¥)?(?:钱)?\\s*(?:以下|以内|之内|及以下)");
     private static final Pattern PRICE_LIMIT_PATTERN_B =
             Pattern.compile("(?:不超过|最多|至多|低于|少于|小于等于|<=?)\\s*(\\d+(?:\\.\\d+)?)\\s*(?:块|快|元|rmb|￥|¥)?(?:钱)?");
+    private static final Pattern LEADING_QUERY_PATTERN =
+            Pattern.compile("^(?:有没有人发布|有没有人卖|有没有卖|有人发布|有人卖|有没有|有无|帮我找一下|帮我搜一下|帮我找|帮我搜|找一下|搜一下|搜索一下|搜索|查询一下|查询|找找|找|搜|想买|想要|给我推荐一下|帮我推荐一下|给我推荐|帮我推荐|推荐一下|推荐下|推荐|最便宜的|最低价的|最划算的|最便宜|最低价|最划算)+");
+    private static final Pattern TRAILING_TONE_PATTERN =
+            Pattern.compile("(?:多少钱|什么价|价格|有吗|有没有|吗|呢|吧|呀|啊|一下|一下子|看看|看下|噢|哦|\\?|？|!|！)+$");
 
     private static final String[] KEYWORD_STOP_WORDS = {
-            "有没有", "有无", "有人发布", "有人卖", "有没有人发布",
-            "有人", "人发布",
+            "有没有人发布", "有没有人卖", "有没有卖", "有人发布", "有人卖", "有没有", "有无",
             "最便宜", "最低价", "最划算", "多少钱", "什么价", "价格",
-            "帮我", "给我", "推荐", "推荐一下", "找一下", "搜索", "查询",
+            "帮我", "给我", "推荐一下", "推荐下", "推荐", "找一下", "搜一下", "搜索一下", "搜索", "查询一下", "查询",
             "找", "搜", "想买", "想要", "发布", "出售", "卖",
-            "一个", "一些", "请问", "麻烦"
+            "一个", "一些", "请问", "麻烦", "一下", "一下子", "看看", "看下"
     };
 
     private AiAssistantTextSupport() {
@@ -84,35 +75,11 @@ final class AiAssistantTextSupport {
         return containsAny(normalized, "换一批", "换一波", "换一组", "再来一批", "再推荐");
     }
 
-    static String extractKeyword(String message, QueryIntent intent) {
+    static String resolveFallbackKeyword(String message, QueryIntent intent) {
         if (StrUtil.isBlank(message) || intent == QueryIntent.GENERAL) {
             return null;
         }
-
-        String candidate = message;
-        if (intent == QueryIntent.CHEAPEST) {
-            Matcher matcher = CHEAPEST_KEYWORD_PATTERN.matcher(message);
-            if (matcher.find() && matcher.groupCount() > 0) {
-                candidate = matcher.group(1);
-            }
-        } else if (intent == QueryIntent.RECOMMEND) {
-            Matcher matcher = RECOMMEND_KEYWORD_PATTERN.matcher(message);
-            if (matcher.find() && matcher.groupCount() > 0) {
-                candidate = matcher.group(1);
-            }
-        } else if (intent == QueryIntent.SEARCH) {
-            Matcher matcher = HAS_GOODS_PATTERN.matcher(message);
-            if (matcher.find() && matcher.groupCount() > 0) {
-                candidate = matcher.group(1);
-            } else {
-                matcher = SEARCH_KEYWORD_PATTERN.matcher(message);
-                if (matcher.find() && matcher.groupCount() > 0) {
-                    candidate = matcher.group(1);
-                }
-            }
-        }
-
-        return cleanupKeyword(candidate);
+        return cleanupKeyword(message);
     }
 
     static String cleanupKeyword(String rawKeyword) {
@@ -124,18 +91,17 @@ final class AiAssistantTextSupport {
         }
 
         String cleaned = rawKeyword;
+        cleaned = LEADING_QUERY_PATTERN.matcher(cleaned).replaceFirst(" ");
         for (String stopWord : KEYWORD_STOP_WORDS) {
             cleaned = StrUtil.replace(cleaned, stopWord, " ");
         }
         cleaned = cleaned.replaceAll("\\d+(?:\\.\\d+)?\\s*(?:块|快|元|rmb|￥|¥)?(?:钱)?\\s*(?:以下|以内|之内|及以下)", " ");
         cleaned = cleaned.replaceAll("(?:不超过|最多|至多|低于|少于|小于等于|<=?)\\s*\\d+(?:\\.\\d+)?\\s*(?:块|快|元|rmb|￥|¥)?(?:钱)?", " ");
-        cleaned = cleaned.replaceAll("\\d{1,2}\\s*(个|款|件|条|样)", " ");
-        cleaned = cleaned.replaceAll("[零一二三四五六七八九十两俩]{1,3}\\s*(个|款|件|条|样)", " ");
         cleaned = cleaned.replaceAll("(?:一批|一波|一组|一堆)", " ");
         cleaned = cleaned.replaceAll("[\\p{Punct}，。！？、；：]+", " ");
         cleaned = cleaned.replaceAll("\\s+", " ").trim();
         cleaned = cleaned.replaceAll("^[的了这款这个这本]+", "");
-        cleaned = cleaned.replaceAll("[吗呢吧呀啊]+$", "").trim();
+        cleaned = TRAILING_TONE_PATTERN.matcher(cleaned).replaceFirst("").trim();
 
         if (cleaned.length() > 24) {
             cleaned = cleaned.substring(0, 24).trim();
@@ -144,32 +110,6 @@ final class AiAssistantTextSupport {
             return null;
         }
         return StrUtil.isBlank(cleaned) ? null : cleaned;
-    }
-
-    static Integer extractRequestedLimit(String message, QueryIntent intent) {
-        if (StrUtil.isBlank(message) || intent == QueryIntent.GENERAL || intent == QueryIntent.CHEAPEST) {
-            return null;
-        }
-        Matcher matcher = QUANTITY_PATTERN.matcher(message);
-        if (matcher.find() && matcher.groupCount() > 0) {
-            try {
-                int value = Integer.parseInt(matcher.group(1));
-                if (value > 0) {
-                    return Math.min(value, AiAssistantQuerySupport.TOOL_CARD_MAX_LIMIT);
-                }
-            } catch (Exception ex) {
-                log.debug("解析数量参数失败，忽略该数量提示: {}", ex.getMessage());
-                return null;
-            }
-        }
-        matcher = CHINESE_QUANTITY_PATTERN.matcher(message);
-        if (matcher.find() && matcher.groupCount() > 0) {
-            Integer value = parseChineseNumber(matcher.group(1));
-            if (value != null && value > 0) {
-                return Math.min(value, AiAssistantQuerySupport.TOOL_CARD_MAX_LIMIT);
-            }
-        }
-        return null;
     }
 
     static BigDecimal extractMaxPrice(String message) {
@@ -200,55 +140,6 @@ final class AiAssistantTextSupport {
         }
     }
 
-    private static Integer parseChineseNumber(String raw) {
-        if (StrUtil.isBlank(raw)) {
-            return null;
-        }
-        String text = raw.trim()
-                .replace("两", "二")
-                .replace("俩", "二");
-        if ("十".equals(text)) {
-            return 10;
-        }
-        if (text.startsWith("十") && text.length() == 2) {
-            int unit = chineseDigit(text.charAt(1));
-            return unit >= 0 ? 10 + unit : null;
-        }
-        if (text.endsWith("十") && text.length() == 2) {
-            int tens = chineseDigit(text.charAt(0));
-            return tens > 0 ? tens * 10 : null;
-        }
-        if (text.length() == 3 && text.charAt(1) == '十') {
-            int tens = chineseDigit(text.charAt(0));
-            int unit = chineseDigit(text.charAt(2));
-            if (tens > 0 && unit >= 0) {
-                return tens * 10 + unit;
-            }
-            return null;
-        }
-        if (text.length() == 1) {
-            int value = chineseDigit(text.charAt(0));
-            return value >= 0 ? value : null;
-        }
-        return null;
-    }
-
-    private static int chineseDigit(char ch) {
-        return switch (ch) {
-            case '零' -> 0;
-            case '一' -> 1;
-            case '二' -> 2;
-            case '三' -> 3;
-            case '四' -> 4;
-            case '五' -> 5;
-            case '六' -> 6;
-            case '七' -> 7;
-            case '八' -> 8;
-            case '九' -> 9;
-            default -> -1;
-        };
-    }
-
     static String normalizeMessage(String message) {
         if (message == null) {
             return "";
@@ -269,4 +160,3 @@ final class AiAssistantTextSupport {
         return false;
     }
 }
-

@@ -30,12 +30,12 @@ class AiAssistantTextSupportTest {
     }
 
     @Test
-    @DisplayName("extractRequestedLimit: 支持阿拉伯数字与中文数字解析")
-    void extractRequestedLimit_parse() {
-        assertEquals(3, AiAssistantTextSupport.extractRequestedLimit("给我推荐3个耳机", QueryIntent.RECOMMEND));
-        assertEquals(10, AiAssistantTextSupport.extractRequestedLimit("给我推荐十个耳机", QueryIntent.RECOMMEND));
-        assertEquals(2, AiAssistantTextSupport.extractRequestedLimit("给我推荐两款耳机", QueryIntent.RECOMMEND));
-        assertNull(AiAssistantTextSupport.extractRequestedLimit("最便宜的耳机", QueryIntent.CHEAPEST));
+    @DisplayName("resolveFallbackKeyword: 回退模式下直接清洗用户原话")
+    void resolveFallbackKeyword_cleanMessage() {
+        assertEquals("键盘", AiAssistantTextSupport.resolveFallbackKeyword("推荐200块钱以内的键盘一下", QueryIntent.RECOMMEND));
+        assertEquals("相机", AiAssistantTextSupport.resolveFallbackKeyword("有没有人卖相机", QueryIntent.SEARCH));
+        assertEquals("耳机", AiAssistantTextSupport.resolveFallbackKeyword("最便宜的耳机多少钱", QueryIntent.CHEAPEST));
+        assertNull(AiAssistantTextSupport.resolveFallbackKeyword("随便聊聊", QueryIntent.GENERAL));
     }
 
     @Test
@@ -56,4 +56,3 @@ class AiAssistantTextSupportTest {
         assertEquals(true, AiAssistantTextSupport.isSwitchBatchRequest("", ctx));
     }
 }
-

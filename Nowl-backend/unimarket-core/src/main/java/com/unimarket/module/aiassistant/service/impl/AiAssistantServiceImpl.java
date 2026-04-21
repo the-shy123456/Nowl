@@ -69,28 +69,29 @@ public class AiAssistantServiceImpl implements AiAssistantService {
 
         String normalizedMessage = StrUtil.trimToEmpty(message);
         boolean switchBatchRequest = AiAssistantTextSupport.isSwitchBatchRequest(normalizedMessage, queryContext);
-        QueryIntent intent = switchBatchRequest
-                ? QueryIntent.RECOMMEND
-                : AiAssistantTextSupport.resolveIntent(normalizedMessage, imageUrl);
-        QueryConstraints constraints = AiAssistantQuerySupport.resolveQueryConstraints(
-                normalizedMessage,
-                intent,
+        QueryIntent contextIntent = AiAssistantQuerySupport.resolveContextIntent(queryContext);
+        QueryConstraints contextConstraints = AiAssistantQuerySupport.resolveContextConstraints(
                 queryContext,
+                contextIntent,
                 switchBatchRequest
         );
 
         Map<String, Object> features = new HashMap<>();
         features.put("hasImage", StrUtil.isNotBlank(imageUrl));
         features.put("messageLength", normalizedMessage.length());
-        features.put("intent", intent.name());
-        if (StrUtil.isNotBlank(constraints.keyword)) {
-            features.put("keyword", constraints.keyword);
+        if (contextIntent != null) {
+            features.put("intent", contextIntent.name());
         }
-        if (constraints.maxPrice != null) {
-            features.put("maxPrice", constraints.maxPrice.toPlainString());
+        if (queryContext != null && StrUtil.isNotBlank(contextConstraints.keyword)) {
+            features.put("keyword", contextConstraints.keyword);
         }
-        features.put("queryLimit", constraints.limit);
-        features.put("queryPage", constraints.page);
+        if (queryContext != null && contextConstraints.maxPrice != null) {
+            features.put("maxPrice", contextConstraints.maxPrice.toPlainString());
+        }
+        if (queryContext != null) {
+            features.put("queryLimit", contextConstraints.limit);
+            features.put("queryPage", contextConstraints.page);
+        }
         features.put("switchBatch", switchBatchRequest);
 
         Map<String, Object> payload = new HashMap<>();
@@ -130,13 +131,28 @@ public class AiAssistantServiceImpl implements AiAssistantService {
                     schoolCode,
                     campusCode,
                     normalizedMessage,
-                    intent,
-                    constraints
+                    queryContext,
+                    switchBatchRequest
             );
             if (response == null) {
-                response = intent == QueryIntent.GENERAL
+                // 这里只保留最小规则兜底，避免主链路再回到复杂的手写 NLU。
+                QueryIntent fallbackIntent = switchBatchRequest
+                        ? QueryIntent.RECOMMEND
+                        : AiAssistantTextSupport.resolveIntent(normalizedMessage, imageUrl);
+                QueryConstraints fallbackConstraints = AiAssistantQuerySupport.resolveFallbackConstraints(
+                        normalizedMessage,
+                        fallbackIntent,
+                        queryContext,
+                        switchBatchRequest
+                );
+                response = fallbackIntent == QueryIntent.GENERAL
                         ? callGeneralChat(userId, normalizedMessage, imageUrl)
-                        : goodsQueryEngine.handleGoodsQuery(intent, schoolCode, campusCode, constraints);
+                        : goodsQueryEngine.handleGoodsQuery(
+                                fallbackIntent,
+                                schoolCode,
+                                campusCode,
+                                fallbackConstraints
+                        );
             }
         }
 
@@ -178,4 +194,3 @@ public class AiAssistantServiceImpl implements AiAssistantService {
         return response;
     }
 }
-

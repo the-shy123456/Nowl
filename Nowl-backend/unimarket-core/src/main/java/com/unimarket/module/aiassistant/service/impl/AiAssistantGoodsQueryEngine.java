@@ -41,8 +41,11 @@ final class AiAssistantGoodsQueryEngine {
         boolean isPlaceholderReply = AiAssistantTextSupport.containsAny(normalizedReply,
                 "正在为您查找", "正在查找", "正在查询", "稍后", "马上", "请稍等");
 
-        String resolvedKeyword = AiAssistantTextSupport.cleanupKeyword(StrUtil.blankToDefault(response.getKeyword(), constraints.keyword));
-        QueryConstraints resolvedConstraints = AiAssistantQuerySupport.resolveConstraintsByIntent(effectiveIntent, constraints, resolvedKeyword);
+        QueryConstraints resolvedConstraints = AiAssistantQuerySupport.resolveResponseConstraints(
+                effectiveIntent,
+                response,
+                constraints
+        );
         List<AiGoodsCardVO> cards = response.getCards() == null ? Collections.emptyList() : response.getCards();
 
         if (effectiveIntent != QueryIntent.GENERAL) {
@@ -64,7 +67,7 @@ final class AiAssistantGoodsQueryEngine {
         }
 
         response.setIntent(effectiveIntent.toCode());
-        response.setKeyword(resolvedKeyword);
+        response.setKeyword(resolvedConstraints.keyword);
         return response;
     }
 
@@ -248,4 +251,3 @@ final class AiAssistantGoodsQueryEngine {
         };
     }
 }
-
